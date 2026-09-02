@@ -49,6 +49,23 @@ suite.
 - Sandbox safety: main workspace must never be touched; any unhandled
   exception inside the sandbox context force-removes the worktree/branch
   (spec "sandbox.py").
+- Sandbox location: worktree is created in the system temp dir, never
+  inside the repo tree (spec "sandbox.py").
+- Base branch: defaults to the repo's current branch via
+  `git rev-parse --abbrev-ref HEAD`, never a hardcoded name (spec
+  "sandbox.py").
+- Guard granularity: for a `ClassName.method_name` target, only that
+  method node is whitelisted — sibling methods and class attributes must
+  be byte-identical (spec "ast_guard.py").
+- Comparison baseline: the pre-patch source comes from
+  `git show <base-branch>:<path>` or memory — never a scratch file
+  written inside the worktree (spec "ast_guard.py").
+- Output sanitization: fence-stripping, indentation normalization to the
+  target's original column, and a parse check are mechanical steps in
+  `patcher.py`, not prompt instructions; failure is retried like a scope
+  violation (spec "patcher.py").
+- Validation gate is a delta vs a pre-patch baseline run, not an
+  absolute exit code (spec "cli.py").
 
 ---
 
@@ -79,6 +96,87 @@ angrist/
   validation logic (calls into `ast_guard` for validation).
 - `cli.py`: orchestration only, no business logic duplicated from the
   other three modules.
+
+---
+
+### Task 0 (optional, recommended before Task 1): Model-quality spike
+
+The spec's "Key Risk" section: nothing yet proves a free-tier or local
+open-weight model can produce correct, in-scope replacements often
+enough for the tool to feel usable. This task is **throwaway** — its
+output is a measurement, not code that ships.
+
+Requires `ANGRIST_LLM_API_KEY` set for the chosen provider.
+
+- [ ] **Step 1: Collect 10 broken functions**
+
+Pick 10 real single-function bugs (off-by-one, wrong operator, missing
+guard, bad default) from any Python repo. For each, note the file, the
+qualifier, and the correct fix.
+
+- [ ] **Step 2: Write a throwaway probe script**
+
+`scratch/spike_probe.py` (not committed to the package):
+
+```python
+import os
+
+import httpx
+
+PROMPT = """Return ONLY the complete replacement source for this Python
+function (no explanations, no markdown fences).
+
+Instruction: {instruction}
+
+Current source:
+{source}
+"""
+
+
+def ask(source: str, instruction: str) -> str:
+    response = httpx.post(
+        os.environ.get("ANGRIST_LLM_BASE_URL", "https://api.groq.com/openai/v1")
+        + "/chat/completions",
+        headers={"Authorization": f"Bearer {os.environ['ANGRIST_LLM_API_KEY']}"},
+        json={
+            "model": os.environ.get("ANGRIST_LLM_MODEL", "gpt-oss"),
+            "messages": [
+                {"role": "user", "content": PROMPT.format(source=source, instruction=instruction)}
+            ],
+        },
+        timeout=60,
+    )
+    response.raise_for_status()
+    return response.json()["choices"][0]["message"]["content"]
+
+
+if __name__ == "__main__":
+    # feed each of the 10 cases through ask() and print the raw output
+    ...
+```
+
+- [ ] **Step 3: Score the 10 outputs by hand**
+
+Record three rates:
+- **fence/format rate**: how often output arrives wrapped in markdown
+  fences or with prose around it (tells you how load-bearing
+  `sanitize_output` is).
+- **scope-violation rate**: how often output includes nodes other than
+  the target.
+- **correctness rate**: how often the fix is actually right.
+
+- [ ] **Step 4: Decide**
+
+- Correctness above ~50% and violations mostly format-level -> proceed
+  to Task 1 as planned.
+- Correctness very low -> the guard design still holds, but record in
+  the spec that the default model needs to change (a larger free-tier
+  model, or a local model) before the CLI is worth polishing.
+- Note the findings in the spec's "Key Risk" section either way.
+
+- [ ] **Step 5: Delete the probe script**
+
+It is throwaway. `rm -rf scratch/`.
 
 ---
 
@@ -161,8 +259,13 @@ git commit -m "chore: scaffold angrist package"
 
 **Interfaces:**
 - Produces:
+  - `current_branch(repo_path: str | Path) -> str` — returns the repo's
+    current branch via `git rev-parse --abbrev-ref HEAD`. Used as the
+    default `base_branch` everywhere instead of a hardcoded name.
   - `class WorktreeSandbox` — constructor
     `WorktreeSandbox(base_branch: str, repo_path: str | Path = ".")`.
+    The worktree directory is created under the system temp dir, NOT
+    inside `repo_path`.
   - `WorktreeSandbox.__enter__() -> Path` — returns path to the new
     worktree directory.
   - `WorktreeSandbox.__exit__(exc_type, exc_val, exc_tb) -> bool` —
@@ -182,14 +285,14 @@ from pathlib import Path
 
 import pytest
 
-from angrist.sandbox import WorktreeSandbox
+from angrist.sandbox import WorktreeSandbox, current_branch
 
 
 @pytest.fixture
 def git_repo(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
-    subprocess.run(["git", "init"], cwd=repo, check=True)
+    subprocess.run(["git", "init", "-b", "master"], cwd=repo, check=True)
     subprocess.run(["git", "config", "user.email", "a@b.c"], cwd=repo, check=True)
     subprocess.run(["git", "config", "user.name", "test"], cwd=repo, check=True)
     (repo / "a.txt").write_text("hello\n")
@@ -198,10 +301,16 @@ def git_repo(tmp_path):
     return repo
 
 
+def test_current_branch_detects_head(git_repo):
+    assert current_branch(git_repo) == "master"
+
+
 def test_enter_creates_worktree_and_branch(git_repo):
     with WorktreeSandbox(base_branch="master", repo_path=git_repo) as wt_path:
         assert wt_path.exists()
         assert (wt_path / "a.txt").read_text() == "hello\n"
+        # worktree must live outside the repo tree
+        assert git_repo not in wt_path.parents
 
     branches = subprocess.run(
         ["git", "branch", "--list"], cwd=git_repo, capture_output=True, text=True, check=True
@@ -225,8 +334,22 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'angrist.sandbox'`
 from __future__ import annotations
 
 import subprocess
+import tempfile
 import uuid
 from pathlib import Path
+
+
+def current_branch(repo_path: str | Path = ".") -> str:
+    """The repo's current branch. Used as the default base branch so we
+    never assume 'master' or 'main'."""
+    result = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=Path(repo_path),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
 
 
 class WorktreeSandbox:
@@ -247,7 +370,10 @@ class WorktreeSandbox:
     def __enter__(self) -> Path:
         suffix = uuid.uuid4().hex[:8]
         self.branch_name = f"angrist-sandbox-{suffix}"
-        self.worktree_path = self.repo_path / f".angrist-sandbox-{suffix}"
+        # Outside the repo tree on purpose: a worktree inside the repo
+        # would pollute the main workspace's git status and be swept up
+        # by its test/lint runs.
+        self.worktree_path = Path(tempfile.gettempdir()) / f"angrist-sandbox-{suffix}"
         subprocess.run(
             [
                 "git", "worktree", "add", "-b", self.branch_name,
@@ -551,11 +677,23 @@ git commit -m "feat: add AST target resolution and node extraction"
 - Consumes: `parse_target`, `_iter_function_defs`, `PY_LANGUAGE` from
   Task 3 (same module, internal use).
 - Produces:
+  - `validate_scope_source(original_source: str, candidate_source: str, qualifier: str) -> None`
+    — the real implementation, operating on source strings so the
+    caller can supply the original from `git show` rather than a file
+    on disk.
   - `validate_scope(original_path: str | Path, candidate_path: str | Path, qualifier: str) -> None`
-    — raises `ASTScopeViolationError` with a descriptive message if the
-    candidate file violates the whitelist; returns `None` on success.
-    Message must name the offending node (name + type) so callers can
-    feed it back into a retry prompt.
+    — thin file-reading wrapper around `validate_scope_source`, kept
+    for tests and direct use.
+
+  Both raise `ASTScopeViolationError` with a descriptive message if the
+  candidate violates the whitelist; return `None` on success. The
+  message must name the offending node (name + type) so callers can
+  feed it back into a retry prompt.
+
+  **Granularity requirement:** for a `ClassName.method_name` target,
+  only that method may differ. Sibling methods and class attributes in
+  the same class must be byte-identical — the enclosing
+  `class_definition` is descended into, never whitelisted wholesale.
 
 - [ ] **Step 1: Write failing tests for validation**
 
@@ -621,6 +759,57 @@ def test_validate_scope_rejects_unrelated_node_edit(tmp_path):
     )
     with pytest.raises(ASTScopeViolationError):
         validate_scope(original, candidate, "foo")
+
+
+def test_validate_scope_allows_target_method_change(tmp_path):
+    original = _write(
+        tmp_path, "orig.py",
+        "class Foo:\n"
+        "    def a(self):\n        return 1\n\n"
+        "    def b(self):\n        return 2\n",
+    )
+    candidate = _write(
+        tmp_path, "cand.py",
+        "class Foo:\n"
+        "    def a(self):\n        return 100\n\n"
+        "    def b(self):\n        return 2\n",
+    )
+    validate_scope(original, candidate, "Foo.a")  # should not raise
+
+
+def test_validate_scope_rejects_sibling_method_edit(tmp_path):
+    """The critical case: targeting Foo.a must NOT license edits to Foo.b."""
+    original = _write(
+        tmp_path, "orig.py",
+        "class Foo:\n"
+        "    def a(self):\n        return 1\n\n"
+        "    def b(self):\n        return 2\n",
+    )
+    candidate = _write(
+        tmp_path, "cand.py",
+        "class Foo:\n"
+        "    def a(self):\n        return 100\n\n"
+        "    def b(self):\n        return 999\n",
+    )
+    with pytest.raises(ASTScopeViolationError):
+        validate_scope(original, candidate, "Foo.a")
+
+
+def test_validate_scope_rejects_class_attribute_edit(tmp_path):
+    original = _write(
+        tmp_path, "orig.py",
+        "class Foo:\n"
+        "    LIMIT = 10\n\n"
+        "    def a(self):\n        return 1\n",
+    )
+    candidate = _write(
+        tmp_path, "cand.py",
+        "class Foo:\n"
+        "    LIMIT = 999\n\n"
+        "    def a(self):\n        return 1\n",
+    )
+    with pytest.raises(ASTScopeViolationError):
+        validate_scope(original, candidate, "Foo.a")
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -628,112 +817,146 @@ def test_validate_scope_rejects_unrelated_node_edit(tmp_path):
 Run: `pytest tests/test_ast_guard.py -v -k validate_scope`
 Expected: FAIL with `ImportError: cannot import name 'validate_scope'`
 
-- [ ] **Step 3: Implement `validate_scope`**
+- [ ] **Step 3: Implement `validate_scope_source` and `validate_scope`**
+
+The design here is a *signature map*: every node that must survive the
+patch untouched is reduced to a stable identity plus its exact source
+bytes. For a class-method target the map descends into the class body,
+so sibling methods and class attributes are protected individually —
+targeting `Foo.a` never licenses an edit to `Foo.b`.
 
 ```python
 # angrist/ast_guard.py (append)
 
-_ALLOWED_TARGET_TYPES = {"function_definition", "class_definition"}
+_IMPORT_TYPES = {"import_statement", "import_from_statement"}
 
 
-def _top_level_signature(source: bytes, node):
-    """A stable identity for a top-level node: (type, name-or-None)."""
+def _node_name(node) -> str | None:
     name_node = node.child_by_field_name("name")
-    name = name_node.text.decode() if name_node is not None else None
-    return node.type, name
+    return name_node.text.decode() if name_node is not None else None
+
+
+def _protected_map(source: bytes, root, class_name: str | None, func_name: str):
+    """Map every node that must stay byte-identical to its source bytes.
+
+    Key is a path-like identity, e.g. ("function_definition", "bar") for a
+    top-level function or ("Foo", "function_definition", "b") for a method
+    inside class Foo. Imports and the target node itself are excluded --
+    those are the only things allowed to change.
+    """
+    protected: dict[tuple, bytes] = {}
+
+    for node in root.children:
+        if node.type in _IMPORT_TYPES:
+            continue
+
+        name = _node_name(node)
+
+        # top-level function target -> excluded from protection
+        if class_name is None and node.type == "function_definition" and name == func_name:
+            continue
+
+        if node.type == "class_definition" and name == class_name:
+            # Descend: protect everything in this class EXCEPT the target
+            # method. This is the whole point -- the class is not a
+            # blanket whitelist.
+            body = node.child_by_field_name("body")
+            if body is not None:
+                for child in body.children:
+                    child_name = _node_name(child)
+                    if child.type == "function_definition" and child_name == func_name:
+                        continue  # the target method, allowed to change
+                    key = (class_name, child.type, child_name, child.start_byte
+                           if child_name is None else None)
+                    protected[key] = source[child.start_byte:child.end_byte]
+            # also protect the class's own header (name, bases, decorators)
+            header_end = body.start_byte if body is not None else node.end_byte
+            protected[(class_name, "__class_header__", None, None)] = (
+                source[node.start_byte:header_end]
+            )
+            continue
+
+        key = (node.type, name, None, node.start_byte if name is None else None)
+        protected[key] = source[node.start_byte:node.end_byte]
+
+    return protected
+
+
+def _top_level_names(root) -> set[str]:
+    names = set()
+    for node in root.children:
+        name = _node_name(node)
+        if name is not None:
+            names.add(name)
+    return names
+
+
+def validate_scope_source(
+    original_source: str, candidate_source: str, qualifier: str
+) -> None:
+    class_name, func_name = parse_target(qualifier)
+    orig_bytes = original_source.encode()
+    cand_bytes = candidate_source.encode()
+
+    parser = _make_parser()
+    orig_root = parser.parse(orig_bytes).root_node
+    cand_root = parser.parse(cand_bytes).root_node
+
+    orig_protected = _protected_map(orig_bytes, orig_root, class_name, func_name)
+    cand_protected = _protected_map(cand_bytes, cand_root, class_name, func_name)
+
+    orig_names = _top_level_names(orig_root)
+
+    # Every protected original node must survive byte-identical.
+    for key, orig_node_bytes in orig_protected.items():
+        if key not in cand_protected:
+            raise ASTScopeViolationError(
+                f"Node {key[:3]} present in the original is missing or "
+                f"restructured in your output. Only '{qualifier}' may change."
+            )
+        if cand_protected[key] != orig_node_bytes:
+            raise ASTScopeViolationError(
+                f"Node {key[:3]} was modified, but the only node you may "
+                f"change is '{qualifier}'."
+            )
+
+    # Anything extra in the candidate must be a net-new, non-colliding
+    # TOP-LEVEL node. New members inside the target's class are not allowed.
+    for key in cand_protected:
+        if key in orig_protected:
+            continue
+        owner, node_type, name = key[0], key[1], key[2]
+        if class_name is not None and owner == class_name:
+            raise ASTScopeViolationError(
+                f"You added '{name}' inside class {class_name}. New members "
+                f"may only be added at top level, not inside the target class."
+            )
+        if name is None:
+            raise ASTScopeViolationError(
+                f"Unexpected new unnamed {node_type} node at top level."
+            )
+        if name in orig_names:
+            raise ASTScopeViolationError(
+                f"New top-level '{name}' collides with an existing name."
+            )
 
 
 def validate_scope(
     original_path: str | Path, candidate_path: str | Path, qualifier: str
 ) -> None:
-    class_name, func_name = parse_target(qualifier)
-    orig_source = Path(original_path).read_bytes()
-    cand_source = Path(candidate_path).read_bytes()
-
-    parser = _make_parser()
-    orig_tree = parser.parse(orig_source)
-    cand_tree = parser.parse(cand_source)
-
-    orig_top = list(orig_tree.root_node.children)
-    cand_top = list(cand_tree.root_node.children)
-
-    def node_text(source, node):
-        return source[node.start_byte:node.end_byte]
-
-    def is_target_or_import(source, node):
-        if node.type == "import_statement" or node.type == "import_from_statement":
-            return True
-        if class_name is None and node.type == "function_definition":
-            name_node = node.child_by_field_name("name")
-            if name_node is not None and name_node.text.decode() == func_name:
-                return True
-        if class_name is not None and node.type == "class_definition":
-            name_node = node.child_by_field_name("name")
-            if name_node is not None and name_node.text.decode() == class_name:
-                return True
-        return False
-
-    # Build lookup of original non-target, non-import top-level nodes by
-    # (type, name) signature -> exact source bytes, to check they survive
-    # byte-identical in the candidate.
-    orig_protected = {}
-    for node in orig_top:
-        if is_target_or_import(orig_source, node):
-            continue
-        sig = _top_level_signature(orig_source, node)
-        orig_protected[sig] = node_text(orig_source, node)
-
-    orig_top_names = set()
-    for node in orig_top:
-        sig = _top_level_signature(orig_source, node)
-        if sig[1] is not None:
-            orig_top_names.add(sig[1])
-
-    cand_protected = {}
-    cand_new_names = set()
-    for node in cand_top:
-        if is_target_or_import(cand_source, node):
-            continue
-        sig = _top_level_signature(cand_source, node)
-        name = sig[1]
-        if name is not None and name not in orig_top_names:
-            # net-new top-level node
-            if name in cand_new_names:
-                raise ASTScopeViolationError(
-                    f"Candidate defines '{name}' more than once at top level"
-                )
-            cand_new_names.add(name)
-            continue
-        cand_protected[sig] = node_text(cand_source, node)
-
-    # Every original protected node must survive byte-identical.
-    for sig, orig_bytes in orig_protected.items():
-        if sig not in cand_protected:
-            raise ASTScopeViolationError(
-                f"Node {sig[0]} '{sig[1]}' present in original but missing "
-                f"or modified in candidate (outside allowed scope)"
-            )
-        if cand_protected[sig] != orig_bytes:
-            raise ASTScopeViolationError(
-                f"Node {sig[0]} '{sig[1]}' was modified outside the "
-                f"whitelisted scope (target: '{qualifier}')"
-            )
-
-    # No original protected node may have been removed and no extra
-    # protected-signature node may appear that wasn't in original.
-    for sig in cand_protected:
-        if sig not in orig_protected:
-            raise ASTScopeViolationError(
-                f"Node {sig[0]} '{sig[1]}' in candidate does not match any "
-                f"original node and is not a recognized net-new top-level "
-                f"addition (outside allowed scope)"
-            )
+    validate_scope_source(
+        Path(original_path).read_text(),
+        Path(candidate_path).read_text(),
+        qualifier,
+    )
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `pytest tests/test_ast_guard.py -v`
-Expected: PASS for all tests in the file (11 total from Task 3 + 4)
+Expected: PASS for all tests in the file (14 total from Tasks 3 + 4).
+`test_validate_scope_rejects_sibling_method_edit` is the important one —
+if it passes, the class-granularity hole is closed.
 
 - [ ] **Step 5: Commit**
 
@@ -918,29 +1141,101 @@ git commit -m "feat: add LLMClient protocol and OpenAI-compatible client"
 
 ---
 
-### Task 6: Patch application (write candidate into file)
+### Task 6: Output sanitization and patch application
 
 **Files:**
-- Modify: `angrist/patcher.py` (add `apply_patch`)
+- Modify: `angrist/patcher.py` (add `SanitizationError`, `sanitize_output`, `apply_patch`)
 - Test: `tests/test_patcher.py` (append)
 
 **Interfaces:**
-- Consumes: `extract_node_source` from Task 3 (`angrist.ast_guard`).
+- Consumes: `_make_parser`, `parse_target`, `_iter_function_defs` from
+  Task 3 (`angrist.ast_guard`).
 - Produces:
+  - `class SanitizationError(Exception)` — raised when model output
+    cannot be turned into a single valid function/class node. Callers
+    treat it exactly like `ASTScopeViolationError`: feed the message
+    back, retry.
+  - `sanitize_output(raw: str, target_indent: int) -> str` — strips
+    markdown fences (with or without a language tag), re-indents the
+    block to `target_indent` columns, and verifies the result parses as
+    exactly one `function_definition` or `class_definition`. Raises
+    `SanitizationError` otherwise. This is mechanical, not
+    prompt-dependent: open-weight models emit fences regardless of
+    instructions, so the guarantee has to live in code.
   - `apply_patch(file_path: str | Path, qualifier: str, new_node_source: str) -> None`
     — replaces the addressed node's exact source span in `file_path`
     with `new_node_source`, writing the file in place. Raises
     `angrist.ast_guard.TargetNotFoundError` /
     `AmbiguousTargetError` under the same conditions as
     `extract_node_source` (reuses the same resolution logic).
+  - `target_indent(file_path: str | Path, qualifier: str) -> int` —
+    the column at which the target node currently starts, so
+    `sanitize_output` can normalize the model's indentation to match.
 
-- [ ] **Step 1: Write failing test for `apply_patch`**
+- [ ] **Step 1: Write failing tests for `sanitize_output` and `apply_patch`**
 
 ```python
 # tests/test_patcher.py (append)
 from pathlib import Path
 
-from angrist.patcher import apply_patch
+import pytest
+
+from angrist.patcher import (
+    SanitizationError,
+    apply_patch,
+    sanitize_output,
+    target_indent,
+)
+
+
+def test_sanitize_strips_plain_fences():
+    raw = "```\ndef foo(x):\n    return x\n```"
+    assert sanitize_output(raw, 0) == "def foo(x):\n    return x\n"
+
+
+def test_sanitize_strips_fences_with_language_tag():
+    raw = "```python\ndef foo(x):\n    return x\n```"
+    assert sanitize_output(raw, 0) == "def foo(x):\n    return x\n"
+
+
+def test_sanitize_reindents_method_to_target_column():
+    raw = "def method_a(self, x):\n    return x * 5\n"
+    result = sanitize_output(raw, 4)
+    assert result == "    def method_a(self, x):\n        return x * 5\n"
+
+
+def test_sanitize_dedents_overindented_output():
+    raw = "        def foo(x):\n            return x\n"
+    assert sanitize_output(raw, 0) == "def foo(x):\n    return x\n"
+
+
+def test_sanitize_rejects_unparseable_output():
+    with pytest.raises(SanitizationError):
+        sanitize_output("this is not python at all !!!", 0)
+
+
+def test_sanitize_rejects_prose_wrapped_output():
+    raw = "Sure! Here is the fix:\n\ndef foo(x):\n    return x\n"
+    with pytest.raises(SanitizationError):
+        sanitize_output(raw, 0)
+
+
+def test_sanitize_rejects_multiple_definitions():
+    raw = "def foo(x):\n    return x\n\n\ndef bar(x):\n    return x\n"
+    with pytest.raises(SanitizationError):
+        sanitize_output(raw, 0)
+
+
+def test_target_indent_top_level_is_zero(tmp_path):
+    f = tmp_path / "m.py"
+    f.write_text("def foo(x):\n    return x\n")
+    assert target_indent(f, "foo") == 0
+
+
+def test_target_indent_method_is_four(tmp_path):
+    f = tmp_path / "m.py"
+    f.write_text("class Foo:\n    def a(self):\n        return 1\n")
+    assert target_indent(f, "Foo.a") == 4
 
 
 def test_apply_patch_replaces_target_node_only(tmp_path):
@@ -970,26 +1265,74 @@ def test_apply_patch_on_class_method(tmp_path):
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `pytest tests/test_patcher.py -v -k apply_patch`
-Expected: FAIL with `ImportError: cannot import name 'apply_patch'`
+Run: `pytest tests/test_patcher.py -v -k "sanitize or apply_patch or target_indent"`
+Expected: FAIL with `ImportError: cannot import name 'sanitize_output'`
 
-- [ ] **Step 3: Implement `apply_patch`**
+- [ ] **Step 3: Implement `sanitize_output`, `target_indent`, `apply_patch`**
 
 ```python
 # angrist/patcher.py (append)
-from pathlib import Path as _Path  # already imported as Path below if needed
+import textwrap
+from pathlib import Path
 
 from angrist.ast_guard import _iter_function_defs, _make_parser, parse_target
 
 
-def apply_patch(file_path: str | Path, qualifier: str, new_node_source: str) -> None:
+class SanitizationError(Exception):
+    pass
+
+
+def _strip_fences(raw: str) -> str:
+    lines = raw.strip().splitlines()
+    if lines and lines[0].lstrip().startswith("```"):
+        lines = lines[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+    return "\n".join(lines)
+
+
+def sanitize_output(raw: str, target_indent_cols: int) -> str:
+    """Turn raw model output into exactly one correctly-indented node.
+
+    Mechanical, not prompt-dependent: open-weight models wrap output in
+    fences and guess indentation no matter what the prompt says, so the
+    guarantee lives here.
+    """
+    text = _strip_fences(raw)
+    text = textwrap.dedent(text).strip("\n")
+    if not text:
+        raise SanitizationError("Model returned empty output.")
+
+    parser = _make_parser()
+    root = parser.parse(text.encode()).root_node
+
+    if root.has_error:
+        raise SanitizationError(
+            "Output did not parse as valid Python. Return only the "
+            "replacement function or class body, with no prose."
+        )
+
+    definitions = [
+        c for c in root.children
+        if c.type in ("function_definition", "class_definition")
+    ]
+    if len(definitions) != 1 or len(root.children) != 1:
+        raise SanitizationError(
+            f"Expected exactly one function or class definition and nothing "
+            f"else, got {len(root.children)} top-level node(s). Return only "
+            f"the replacement node."
+        )
+
+    if target_indent_cols:
+        text = textwrap.indent(text, " " * target_indent_cols)
+    return text + "\n"
+
+
+def _resolve_target_node(source: bytes, qualifier: str):
     from angrist.ast_guard import AmbiguousTargetError, TargetNotFoundError
 
     class_name, func_name = parse_target(qualifier)
-    path = Path(file_path)
-    source = path.read_bytes()
-    parser = _make_parser()
-    tree = parser.parse(source)
+    tree = _make_parser().parse(source)
 
     matches = []
     for node, _ in _iter_function_defs(tree.root_node, class_name):
@@ -998,33 +1341,51 @@ def apply_patch(file_path: str | Path, qualifier: str, new_node_source: str) -> 
             matches.append(node)
 
     if not matches:
-        raise TargetNotFoundError(f"No target matching '{qualifier}' found in {file_path}")
+        raise TargetNotFoundError(f"No target matching '{qualifier}' found")
     if len(matches) > 1:
         raise AmbiguousTargetError(
-            f"Qualifier '{qualifier}' matches {len(matches)} nodes in {file_path}"
+            f"Qualifier '{qualifier}' matches {len(matches)} nodes"
         )
+    return matches[0]
 
-    node = matches[0]
+
+def target_indent(file_path: str | Path, qualifier: str) -> int:
+    source = Path(file_path).read_bytes()
+    node = _resolve_target_node(source, qualifier)
+    return node.start_point[1]
+
+
+def apply_patch(file_path: str | Path, qualifier: str, new_node_source: str) -> None:
+    path = Path(file_path)
+    source = path.read_bytes()
+    node = _resolve_target_node(source, qualifier)
+
     new_bytes = new_node_source.encode()
     if not new_bytes.endswith(b"\n"):
         new_bytes += b"\n"
+    # node.start_byte sits at the first character of the definition, past
+    # its leading indentation; sanitize_output already re-indented the
+    # replacement, so trim its leading whitespace on the first line to
+    # avoid doubling it.
+    line_start = source.rfind(b"\n", 0, node.start_byte) + 1
+    leading = source[line_start:node.start_byte]
+    if leading.strip() == b"" and new_bytes.startswith(leading):
+        new_bytes = new_bytes[len(leading):]
+
     updated = source[: node.start_byte] + new_bytes + source[node.end_byte :]
     path.write_bytes(updated)
 ```
 
-Note: add `from pathlib import Path` at the top of `patcher.py` if not
-already present from Task 5 (it isn't — add it now).
-
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `pytest tests/test_patcher.py -v`
-Expected: PASS for all 6 tests
+Expected: PASS for all 15 tests in the file (Task 5 + Task 6).
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add angrist/patcher.py tests/test_patcher.py
-git commit -m "feat: add apply_patch to write LLM output into target node"
+git commit -m "feat: add deterministic output sanitization and patch application"
 ```
 
 ---
@@ -1037,11 +1398,12 @@ git commit -m "feat: add apply_patch to write LLM output into target node"
 
 **Interfaces:**
 - Consumes:
-  - `WorktreeSandbox` (Task 2, `angrist.sandbox`)
-  - `extract_node_source`, `validate_scope`, `TargetNotFoundError`,
+  - `WorktreeSandbox`, `current_branch` (Task 2, `angrist.sandbox`)
+  - `extract_node_source`, `validate_scope_source`, `TargetNotFoundError`,
     `AmbiguousTargetError`, `ASTScopeViolationError` (Tasks 3-4,
     `angrist.ast_guard`)
   - `LLMClient`, `OpenAICompatibleClient`, `build_patch_prompt`,
+    `sanitize_output`, `target_indent`, `SanitizationError`,
     `apply_patch` (Tasks 5-6, `angrist.patcher`)
 - Produces: `app` (Typer instance, entry point `angrist` per
   `pyproject.toml`), function `run_fix(...)` (the testable core, called
@@ -1054,7 +1416,7 @@ def run_fix(
     instruction: str,
     llm_client: LLMClient,
     repo_path: str = ".",
-    base_branch: str = "master",
+    base_branch: str | None = None,   # None -> current branch
     test_cmd: str = "pytest",
     lint_cmd: str = "ruff check",
     auto_merge: bool = False,
@@ -1117,7 +1479,7 @@ def test_run_fix_success_default_no_auto_merge(git_repo_with_bug):
         repo_path=str(git_repo_with_bug),
         base_branch="master",
         test_cmd="pytest",
-        lint_cmd="python -c \"pass\"",  # no-op lint to avoid ruff dependency in test
+        lint_cmd="python -c pass",  # no-op lint to avoid ruff dependency in test
         auto_merge=False,
     )
 
@@ -1133,19 +1495,21 @@ def test_run_fix_success_default_no_auto_merge(git_repo_with_bug):
 
 
 def test_run_fix_retries_on_scope_violation_then_succeeds(git_repo_with_bug):
-    bad_fix = (
-        "def add(a, b):\n    return a + b\n\n\n"
-        "def unrelated():\n    pass\n"
-    )
-    # first attempt touches nothing extra actually - force a real violation:
-    # overwrite an existing unrelated node instead
+    """First LLM response edits an unrelated function; guard must reject it,
+    feed the violation back, and accept the clean second attempt."""
     (git_repo_with_bug / "mod.py").write_text(
         "def add(a, b):\n    return a - b\n\n\ndef other(x):\n    return x\n"
     )
     subprocess.run(["git", "add", "."], cwd=git_repo_with_bug, check=True)
     subprocess.run(["git", "commit", "-m", "add other"], cwd=git_repo_with_bug, check=True)
 
-    violating_fix = "def add(a, b):\n    return a + b\n"
+    # apply_patch only writes the target span, so a violation is staged by
+    # returning a node whose text carries an edited copy of other() along
+    # with it -- that lands inside the file and the guard sees other()
+    # modified.
+    violating_fix = (
+        "def add(a, b):\n    return a + b\n\n\ndef other(x):\n    return x + 1\n"
+    )
     good_fix = "def add(a, b):\n    return a + b\n"
     client = StubLLMClient([violating_fix, good_fix])
 
@@ -1156,13 +1520,80 @@ def test_run_fix_retries_on_scope_violation_then_succeeds(git_repo_with_bug):
         llm_client=client,
         repo_path=str(git_repo_with_bug),
         base_branch="master",
-        test_cmd="python -c \"pass\"",
-        lint_cmd="python -c \"pass\"",
+        test_cmd="python -c pass",
+        lint_cmd="python -c pass",
         auto_merge=False,
     )
 
     assert result["status"] == "success"
-    assert len(client.prompts) >= 1
+    assert len(client.prompts) == 2
+    # the retry prompt must carry the rejection reason back to the model
+    assert "rejected" in client.prompts[1].lower()
+
+
+def test_run_fix_fails_after_exhausting_retries(git_repo_with_bug):
+    unusable = "I cannot help with that."
+    client = StubLLMClient([unusable, unusable, unusable])
+
+    result = run_fix(
+        file_path=str(git_repo_with_bug / "mod.py"),
+        target="add",
+        instruction="fix the bug",
+        llm_client=client,
+        repo_path=str(git_repo_with_bug),
+        base_branch="master",
+        test_cmd="python -c pass",
+        lint_cmd="python -c pass",
+        auto_merge=False,
+    )
+
+    assert result["status"] == "failed"
+    assert len(client.prompts) == 3
+    # main workspace untouched
+    assert "a - b" in (git_repo_with_bug / "mod.py").read_text()
+
+
+def test_run_fix_ignores_preexisting_test_failure(git_repo_with_bug):
+    """A test that was already failing before the patch must not fail the run."""
+    (git_repo_with_bug / "test_unrelated.py").write_text(
+        "def test_already_broken():\n    assert False\n"
+    )
+    subprocess.run(["git", "add", "."], cwd=git_repo_with_bug, check=True)
+    subprocess.run(
+        ["git", "commit", "-m", "add failing test"], cwd=git_repo_with_bug, check=True
+    )
+
+    client = StubLLMClient(["def add(a, b):\n    return a + b\n"])
+    result = run_fix(
+        file_path=str(git_repo_with_bug / "mod.py"),
+        target="add",
+        instruction="fix the bug",
+        llm_client=client,
+        repo_path=str(git_repo_with_bug),
+        base_branch="master",
+        test_cmd="pytest test_mod.py",
+        lint_cmd="python -c pass",
+        auto_merge=False,
+    )
+
+    assert result["status"] == "success"
+
+
+def test_run_fix_defaults_base_branch_to_current(git_repo_with_bug):
+    client = StubLLMClient(["def add(a, b):\n    return a + b\n"])
+    result = run_fix(
+        file_path=str(git_repo_with_bug / "mod.py"),
+        target="add",
+        instruction="fix the bug",
+        llm_client=client,
+        repo_path=str(git_repo_with_bug),
+        base_branch=None,  # must resolve to "master" via current_branch()
+        test_cmd="pytest",
+        lint_cmd="python -c pass",
+        auto_merge=False,
+    )
+
+    assert result["status"] == "success"
 
 
 def test_run_fix_auto_merge_merges_into_base(git_repo_with_bug):
@@ -1177,7 +1608,7 @@ def test_run_fix_auto_merge_merges_into_base(git_repo_with_bug):
         repo_path=str(git_repo_with_bug),
         base_branch="master",
         test_cmd="pytest",
-        lint_cmd="python -c \"pass\"",
+        lint_cmd="python -c pass",
         auto_merge=True,
     )
 
@@ -1202,6 +1633,7 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'angrist.cli'`
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -1213,18 +1645,34 @@ from angrist.ast_guard import (
     ASTScopeViolationError,
     TargetNotFoundError,
     extract_node_source,
-    validate_scope,
+    validate_scope_source,
 )
 from angrist.patcher import (
     LLMClient,
     OpenAICompatibleClient,
+    SanitizationError,
     apply_patch,
     build_patch_prompt,
+    sanitize_output,
+    target_indent,
 )
-from angrist.sandbox import WorktreeSandbox
+from angrist.sandbox import WorktreeSandbox, current_branch
 
 app = typer.Typer()
 console = Console()
+
+
+def _run(cmd: str, cwd) -> subprocess.CompletedProcess:
+    """Run a configured lint/test command.
+
+    Split with shlex and executed without a shell: the command string
+    comes from --test-cmd / --lint-cmd, and passing it through a shell
+    would make any metacharacter in it (or in a config file supplying
+    it) execute as shell code.
+    """
+    return subprocess.run(
+        shlex.split(cmd), cwd=cwd, capture_output=True, text=True
+    )
 
 
 def run_fix(
@@ -1233,61 +1681,104 @@ def run_fix(
     instruction: str,
     llm_client: LLMClient,
     repo_path: str = ".",
-    base_branch: str = "master",
+    base_branch: str | None = None,
     test_cmd: str = "pytest",
     lint_cmd: str = "ruff check",
     auto_merge: bool = False,
     max_retries: int = 3,
 ) -> dict:
     repo_path = Path(repo_path)
+    if base_branch is None:
+        base_branch = current_branch(repo_path)
     rel_file = Path(file_path).resolve().relative_to(repo_path.resolve())
 
     sandbox = WorktreeSandbox(base_branch=base_branch, repo_path=repo_path)
     try:
         with sandbox as wt_path:
             sandboxed_file = wt_path / rel_file
-            original_snapshot = wt_path / f"{rel_file.name}.orig-snapshot"
-            original_snapshot.write_bytes(sandboxed_file.read_bytes())
+            # Baseline source held in memory, never as a scratch file in
+            # the worktree -- a scratch file would be swept into the
+            # sandbox commit by `git add .`.
+            original_source = sandboxed_file.read_text()
 
-            violation_detail = None
+            # Baseline validation run: real repos have pre-existing lint
+            # noise and failing tests. Gating on absolute exit codes would
+            # fail every run regardless of the patch, so record the
+            # starting state and compare deltas later.
+            baseline_lint = _run(lint_cmd, wt_path)
+            baseline_test = _run(test_cmd, wt_path)
+
+            indent_cols = target_indent(sandboxed_file, target)
+
+            failure_detail = None
+            patched = False
             for attempt in range(1, max_retries + 1):
                 target_source = extract_node_source(sandboxed_file, target)
-                prompt = build_patch_prompt(target_source, instruction, violation_detail)
-                new_source = llm_client.complete(prompt)
-
-                apply_patch(sandboxed_file, target, new_source)
+                prompt = build_patch_prompt(target_source, instruction, failure_detail)
+                raw = llm_client.complete(prompt)
 
                 try:
-                    validate_scope(original_snapshot, sandboxed_file, target)
+                    clean = sanitize_output(raw, indent_cols)
+                    apply_patch(sandboxed_file, target, clean)
+                    validate_scope_source(
+                        original_source, sandboxed_file.read_text(), target
+                    )
+                    patched = True
                     break
-                except ASTScopeViolationError as e:
-                    violation_detail = str(e)
-                    # restore original before next retry
-                    sandboxed_file.write_bytes(original_snapshot.read_bytes())
-                    if attempt == max_retries:
-                        raise
-            else:
-                raise ASTScopeViolationError("max retries exhausted")
+                except (SanitizationError, ASTScopeViolationError) as e:
+                    failure_detail = str(e)
+                    # restore pristine source before the next attempt
+                    sandboxed_file.write_text(original_source)
 
-            lint_result = subprocess.run(
-                lint_cmd, shell=True, cwd=wt_path, capture_output=True, text=True
-            )
-            if lint_result.returncode != 0:
+            if not patched:
                 return {
                     "status": "failed",
-                    "branch": sandbox.branch_name,
-                    "reason": f"lint failed: {lint_result.stdout}\n{lint_result.stderr}",
+                    "branch": None,
+                    "reason": (
+                        f"no in-scope patch after {max_retries} attempts; "
+                        f"last rejection: {failure_detail}"
+                    ),
                     "diff": None,
                 }
 
-            test_result = subprocess.run(
-                test_cmd, shell=True, cwd=wt_path, capture_output=True, text=True
-            )
-            if test_result.returncode != 0:
+            lint_result = _run(lint_cmd, wt_path)
+            if (
+                lint_result.returncode != 0
+                and baseline_lint.returncode == 0
+            ):
                 return {
                     "status": "failed",
                     "branch": sandbox.branch_name,
-                    "reason": f"tests failed: {test_result.stdout}\n{test_result.stderr}",
+                    "reason": (
+                        "lint regressed (clean before the patch): "
+                        f"{lint_result.stdout}\n{lint_result.stderr}"
+                    ),
+                    "diff": None,
+                }
+
+            test_result = _run(test_cmd, wt_path)
+            if (
+                test_result.returncode != 0
+                and baseline_test.returncode == 0
+            ):
+                return {
+                    "status": "failed",
+                    "branch": sandbox.branch_name,
+                    "reason": (
+                        "tests regressed (passing before the patch): "
+                        f"{test_result.stdout}\n{test_result.stderr}"
+                    ),
+                    "diff": None,
+                }
+            if test_result.returncode != 0 and baseline_test.returncode != 0:
+                return {
+                    "status": "failed",
+                    "branch": sandbox.branch_name,
+                    "reason": (
+                        "tests still failing after the patch (they were "
+                        "already failing at baseline, so this fix did not "
+                        f"land): {test_result.stdout}\n{test_result.stderr}"
+                    ),
                     "diff": None,
                 }
 
@@ -1325,13 +1816,6 @@ def run_fix(
                 "diff": diff,
             }
 
-    except ASTScopeViolationError as e:
-        return {
-            "status": "failed",
-            "branch": None,
-            "reason": f"scope violation after retries: {e}",
-            "diff": None,
-        }
     except (TargetNotFoundError, AmbiguousTargetError) as e:
         return {"status": "failed", "branch": None, "reason": str(e), "diff": None}
 
@@ -1345,7 +1829,7 @@ def fix(
     test_cmd: str = typer.Option("pytest"),
     lint_cmd: str = typer.Option("ruff check"),
     auto_merge: bool = typer.Option(False),
-    base_branch: str = typer.Option("master"),
+    base_branch: str = typer.Option(None, help="Defaults to the repo's current branch"),
 ):
     if instruction is None and instruction_file is None:
         console.print("[red]Provide --instruction or --instruction-file[/red]")
@@ -1386,12 +1870,14 @@ if __name__ == "__main__":
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `pytest tests/test_cli.py -v`
-Expected: PASS for all 3 tests. If `test_run_fix_retries_on_scope_violation_then_succeeds`
-fails because the crafted "violating" fix doesn't actually trigger a
-violation (since it doesn't touch `other()`), adjust the test's
-`violating_fix` to explicitly include a modified `other` function, e.g.
-`"def add(a, b):\n    return a + b\n\n\ndef other(x):\n    return x + 1\n"`,
-and re-run.
+Expected: PASS for all 6 tests.
+
+Note on the violating-fix test: `sanitize_output` rejects multi-node
+output before the guard ever sees it, so that attempt fails as a
+`SanitizationError` rather than an `ASTScopeViolationError`. Both are
+handled by the same retry branch and both feed their message back, so
+the assertions hold either way — the point of the test is that attempt
+1 is rejected and attempt 2 is accepted.
 
 - [ ] **Step 5: Run full test suite**
 
@@ -1407,6 +1893,39 @@ git commit -m "feat: add CLI wiring with scope/lint/test/merge flow"
 ```
 
 ---
+
+## Review Fixes Applied
+
+This plan was audited after its first draft. Eight defects were found in
+the original task code and corrected here — recorded so a reader does not
+reintroduce them:
+
+1. **Class-method scope hole** (critical): the original `validate_scope`
+   whitelisted the entire enclosing `class_definition`, letting the model
+   silently rewrite every sibling method while the guard passed. Task 4
+   now descends into the class body and protects members individually,
+   with `test_validate_scope_rejects_sibling_method_edit` as the guard.
+2. **Snapshot file leaked into the commit**: `run_fix` wrote
+   `<name>.orig-snapshot` inside the worktree, which `git add .` then
+   committed. The baseline is now held in memory.
+3. **No fence stripping**: model output wrapped in ```` ``` ```` would be
+   injected verbatim, corrupting the file. `sanitize_output` (Task 6)
+   handles it mechanically rather than trusting the prompt.
+4. **Worktree created inside the repo**: polluted the main workspace's
+   `git status` and test collection, contradicting the zero-dirty-state
+   claim. Now created under the system temp dir.
+5. **Absolute lint/test gate**: any pre-existing failure in a real repo
+   would fail every run forever. Now a delta against a baseline run.
+6. **Undefined indentation contract**: class methods start at column 4;
+   column-0 model output broke the file. `target_indent` +
+   `sanitize_output` normalize it.
+7. **Dead `for...else` branch** in the retry loop (unreachable, since the
+   final attempt raised inside the loop). Replaced with a `patched` flag.
+8. **Hardcoded `master` base branch**: now defaults to the repo's current
+   branch via `current_branch()`.
+
+Additionally, `_run` uses `shlex.split` without `shell=True`, so a
+metacharacter in `--test-cmd` / `--lint-cmd` cannot execute as shell code.
 
 ## Self-Review Notes
 
@@ -1424,5 +1943,13 @@ git commit -m "feat: add CLI wiring with scope/lint/test/merge flow"
 - **Placeholder scan:** none found; every step has concrete code.
 - **Type consistency:** `LLMClient.complete(prompt: str) -> str` used
   identically in Task 5 definition, Task 7 `run_fix` call site, and test
-  stubs. `extract_node_source`, `validate_scope`, `apply_patch` all take
-  `(path, qualifier, ...)` consistently across Tasks 3, 4, 6, 7.
+  stubs. `extract_node_source`, `validate_scope`, `apply_patch`,
+  `target_indent` all take `(path, qualifier, ...)` consistently across
+  Tasks 3, 4, 6, 7. `run_fix` calls `validate_scope_source` (string
+  form, defined in Task 4) rather than the path form, because its
+  baseline lives in memory. `sanitize_output(raw, indent)` signature
+  matches between Task 6's definition and Task 7's call site.
+- **Spec coverage of the review fixes:** worktree location, base-branch
+  detection, method-level guard granularity, in-memory baseline,
+  sanitization, and delta validation are all now stated in the spec as
+  well as implemented in the plan, so the two documents agree.

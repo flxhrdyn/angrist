@@ -57,20 +57,26 @@ User Request (--file, --target, --instruction)
         |
         v
 [2. Worktree Sandbox]  sandbox.py — spawn isolated worktree + branch
+        |                (outside the repo tree, base = current branch)
+        v
+[3. Baseline Capture]  run lint + test on untouched sandbox, record results
         |
         v
-[3. AST-Scoped LLM Patch]  patcher.py — send target node + instruction to LLM
+[4. AST-Scoped LLM Patch]  patcher.py — send target node + instruction to LLM
         |
         v
-[4. AST Scope Guard]  ast_guard.py — validate candidate vs whitelist
+[5. Sanitize]  strip fences, normalize indent, verify it parses
+        |
+        v
+[6. AST Scope Guard]  ast_guard.py — validate candidate vs whitelist
         |
    +----+----+
-   | ok | violation -> retry (max 3, violation detail fed back)
+   | ok | violation or bad output -> retry (max 3, detail fed back)
    v         |
-[5. Lint + Test]      (retries exhausted -> rollback + report)
+[7. Lint + Test vs baseline]   (retries exhausted -> rollback + report)
    |
  +-+-+
-pass  fail -> rollback + report
+no regression   regression -> rollback + report
    |
 [Merge & Clean]  (manual review by default, or --auto-merge)
 ```
@@ -82,6 +88,13 @@ pass  fail -> rollback + report
 Context manager wrapping `git worktree` via `subprocess`.
 
 - `__enter__`: `git worktree add -b <temp-branch> <temp-path> <base-branch>`.
+- **Worktree location is outside the repo** — a sibling temp directory
+  (system temp dir), never inside the repo tree. A worktree created
+  inside the repo would show up in the main workspace's `git status`
+  and be collected by the main repo's own test/lint runs, breaking the
+  "zero dirty state" guarantee.
+- **`base_branch` defaults to the repo's current branch**, detected via
+  `git rev-parse --abbrev-ref HEAD` — not a hardcoded `master`/`main`.
 - `__exit__`: on exception, `git worktree remove --force` + delete temp
   branch. On clean success, worktree/branch are left in place (caller
   decides merge/cleanup) unless `--auto-merge` was requested, in which
@@ -98,13 +111,22 @@ Context manager wrapping `git worktree` via `subprocess`.
   is what gets sent to the LLM).
 - **Validation** (`ASTScopeViolationError` on failure): given the
   original file AST and the candidate (post-patch) file AST —
-  - target node may differ (that's the fix).
+  - **only the addressed node itself** may differ. When the target is
+    `ClassName.method_name`, the whitelist is that *method node*, not
+    the enclosing class: every sibling method, class attribute, and
+    decorator in that class must still be byte-identical. Validation
+    therefore descends into the class body rather than treating the
+    whole `class_definition` as the target.
   - import nodes may differ.
   - net-new top-level nodes are allowed, provided their name does not
     collide with any existing top-level name in the file.
   - every other existing node must be byte-identical (strict AST
     equality) between original and candidate.
   - any other difference raises `ASTScopeViolationError`.
+- **Original comparison baseline** comes from git
+  (`git show <base-branch>:<path>`) or an in-memory snapshot — never a
+  scratch file written inside the worktree, which would otherwise be
+  swept into the sandbox commit.
 
 ### `patcher.py`
 
@@ -113,6 +135,19 @@ Context manager wrapping `git worktree` via `subprocess`.
 - `LLMClient` is a small protocol (`complete(prompt) -> str`) backed by
   an OpenAI-compatible HTTP client, so Groq, OpenAI, Ollama, vLLM are
   all interchangeable by config/env — no LiteLLM needed for this.
+- **Deterministic output sanitization** before anything is written.
+  Free/open-weight models routinely wrap output in markdown fences
+  regardless of prompt instructions — relying on the prompt here would
+  reintroduce the very probabilistic guardrail this project exists to
+  replace. So `patcher.py` mechanically:
+  1. strips leading/trailing markdown code fences and any language tag,
+  2. re-indents the replacement to the target node's original column
+     (class methods start at column 4, not 0 — the model's output
+     indentation is normalized, not trusted),
+  3. parses the sanitized text with `py-tree-sitter` and rejects it if
+     it does not parse as a single valid function/class definition.
+  A sanitization failure is treated exactly like a scope violation:
+  detail is fed back and the attempt is retried.
 - Receives the full replacement text, writes it into the file inside
   the sandbox worktree, replacing the old node.
 
@@ -122,15 +157,23 @@ Wires the flow with `Typer` + `Rich` status output:
 
 1. Resolve target, extract node.
 2. Enter `WorktreeSandbox`.
-3. Patch loop: send to LLM, guard-check candidate.
-   - Violation: feed violation detail back into next prompt, retry
-     (max 3 attempts total). Exhausted -> rollback, report failure.
-4. Guard pass -> run `--lint-cmd` (default `ruff check`), then
-   `--test-cmd` (default `pytest`) inside the sandbox.
-   - Either fails -> rollback, report failure.
-5. Both pass -> print diff summary. If `--auto-merge`, merge sandbox
-   branch into base and clean up worktree; otherwise leave branch in
-   place for manual review/merge.
+3. **Baseline capture**: run `--lint-cmd` and `--test-cmd` in the
+   untouched sandbox first and record their results. Real repos have
+   pre-existing lint noise and already-failing tests; gating on
+   absolute exit code would make every run fail regardless of the fix.
+   The gate is a *delta*: no test that passed at baseline may fail
+   after the patch, and no new lint finding may appear.
+4. Patch loop: send to LLM, sanitize output, guard-check candidate.
+   - Violation or sanitization failure: feed detail back into next
+     prompt, retry (max 3 attempts total). Exhausted -> rollback,
+     report failure.
+5. Guard pass -> re-run `--lint-cmd` (default `ruff check`) and
+   `--test-cmd` (default `pytest`) inside the sandbox, compare against
+   baseline.
+   - Regression vs baseline -> rollback, report failure.
+6. No regression -> print diff summary. If `--auto-merge`, merge
+   sandbox branch into base and clean up worktree; otherwise leave
+   branch in place for manual review/merge.
 
 ## CLI Flags
 
@@ -151,11 +194,31 @@ Wires the flow with `Typer` + `Rich` status output:
 - `ASTScopeViolationError` -> retry with violation detail injected into
   prompt, up to 3 attempts, then rollback + report which node(s) the
   LLM tried to touch.
-- Lint or test failure post-guard -> rollback + report failing command
-  output.
+- Sanitization failure (unstrippable fences, output that does not parse
+  as a single function/class node) -> same handling as a scope
+  violation: detail fed back, retry within the 3-attempt budget.
+- Lint or test *regression vs baseline* post-guard -> rollback + report
+  which tests newly failed or which lint findings are new. Pre-existing
+  failures present at baseline never fail the run.
 - Any unhandled exception inside the sandbox context -> worktree/branch
   force-removed by `WorktreeSandbox.__exit__`; main workspace
   unaffected.
+
+## Key Risk (unvalidated)
+
+The value proposition assumes a free-tier or locally-hosted
+open-weight model can produce a correct, in-scope, full-node
+replacement often enough to be useful. This has not been measured. If
+the violation or incorrectness rate is high, the 3-attempt budget
+burns without producing a usable fix and the tool feels broken.
+
+**Mitigation before heavy investment:** run a throwaway spike against
+~10 real broken functions using the intended default (Groq +
+`gpt-oss`), measuring (a) scope-violation rate, (b) sanitization
+failure rate, (c) fix correctness rate. If violation rates are high,
+the design still holds — the guard correctly rejects bad output — but
+the retry budget and prompt shape need tuning before the CLI is worth
+polishing.
 
 ## Tech Stack
 
@@ -170,9 +233,12 @@ Python 3.11+, Typer, Rich, py-tree-sitter, native `git worktree` via
 - `ast_guard.py`: unit tests with fixture Python files — correct
   extraction by qualifier, duplicate-name resolution, whitelist pass
   cases, violation-trigger cases (edited unrelated node, colliding new
-  top-level name).
+  top-level name, **edited sibling method inside the target's own
+  class**).
 - `patcher.py`: unit tests with a stubbed `LLMClient` — no live API
-  calls in test suite.
+  calls in test suite. Sanitization tests cover fenced output, fenced
+  output with a language tag, column-0 output for a class method, and
+  output that does not parse.
 - `cli.py`: integration test running the full flow end-to-end against
   a fixture repo with a deliberately broken function, stubbed LLM
   returning a known-good fix, asserting sandbox cleanup / merge
