@@ -6,10 +6,18 @@ LLM coding agents rely on prompt engineering to bound edit scope. This is
 probabilistic, not enforced: agents over-edit (touch unrelated functions),
 leave dirty git state, and burn tokens sending whole files as context.
 
+Existing hosted agents (Claude Code, Cursor) can partially mitigate this
+with host-side hooks, but that guardrail only exists inside that host's
+own session and tool-call loop. There's no standalone, headless way to
+get the same deterministic scope guarantee using a free or self-hosted
+open-weight model, independent of any particular agent host.
+
 ## Solution
 
-`angrist` is a Python CLI that runs a single-function micro-fix through two
-hard deterministic guardrails:
+`angrist` is a Python CLI, host-agnostic and headless, that runs a
+single-function micro-fix through two hard deterministic guardrails,
+targeted at users who want this on free or local/open models rather
+than tied to a paid hosted agent:
 
 1. **Git worktree isolation** — all edits and test runs happen in a
    temporary worktree; the main workspace is never touched mid-run.
@@ -24,8 +32,11 @@ hard deterministic guardrails:
 - Target selection: **manual only** (`--file` + `--target`), no
   stack-trace auto-parsing.
 - LLM: **provider-agnostic** via a thin `LLMClient` protocol over an
-  OpenAI-compatible HTTP API. Default provider **Groq**, default model
-  **gpt-oss**. No LiteLLM dependency.
+  OpenAI-compatible HTTP API — Groq, local Ollama/vLLM, or any other
+  OpenAI-compatible endpoint are interchangeable by config/env, no code
+  change. Default provider **Groq** (free tier), default model
+  **gpt-oss** (open-weight, also runnable locally for users who want
+  it). No LiteLLM dependency.
 - Patch strategy: **full-node-replace** (LLM returns the complete new
   function/class body; guard re-parses whole file and swaps the node).
   No unified-diff patching.
