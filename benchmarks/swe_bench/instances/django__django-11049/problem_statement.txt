@@ -1,0 +1,3 @@
+Correct expected format in invalid DurationField error message
+
+DurationField default error message states: '[DD] [HH:[MM:]]ss[.uuuuuu] format.' This is incorrect; HH can only be provided if MM is also provided. The message should be: '[DD] [[HH:]MM:]ss[.uuuuuu] format.'

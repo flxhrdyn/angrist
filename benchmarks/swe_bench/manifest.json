@@ -1,6 +1,7 @@
 {
-  "dataset": "swe_bench_lite_curated",
-  "version": "1.0",
+  "dataset": "SWE-bench_Lite (Curated Representation)",
+  "version": "1.0.0",
+  "description": "Curated self-contained single-function instances from SWE-bench Lite across diverse domains.",
   "instances": [
     {
       "instance_id": "psf__requests-1142",
@@ -9,8 +10,7 @@
       "file": "requests/models.py",
       "target": "PreparedRequest.prepare_url",
       "instruction_file": "problem_statement.txt",
-      "test_cmd": "pytest tests/test_models.py",
-      "category": "url_parsing"
+      "test_cmd": "pytest tests/test_models.py"
     },
     {
       "instance_id": "marshmallow__marshmallow-1343",
@@ -19,8 +19,7 @@
       "file": "marshmallow/schema.py",
       "target": "Schema._do_load",
       "instruction_file": "problem_statement.txt",
-      "test_cmd": "pytest tests/test_schema.py",
-      "category": "serialization"
+      "test_cmd": "pytest tests/test_schema.py"
     },
     {
       "instance_id": "pallets__flask-4045",
@@ -29,8 +28,70 @@
       "file": "flask/blueprints.py",
       "target": "Blueprint.add_url_rule",
       "instruction_file": "problem_statement.txt",
-      "test_cmd": "pytest tests/test_blueprints.py",
-      "category": "routing"
+      "test_cmd": "pytest tests/test_blueprints.py"
+    },
+    {
+      "instance_id": "django__django-11099",
+      "repo": "django/django",
+      "directory": "instances/django__django-11099",
+      "file": "django/contrib/auth/validators.py",
+      "target": "ASCIIUsernameValidator.__init__",
+      "instruction_file": "problem_statement.txt",
+      "test_cmd": "pytest tests/test_validators.py"
+    },
+    {
+      "instance_id": "pallets__flask-4992",
+      "repo": "pallets/flask",
+      "directory": "instances/pallets__flask-4992",
+      "file": "flask/config.py",
+      "target": "Config.from_file",
+      "instruction_file": "problem_statement.txt",
+      "test_cmd": "pytest tests/test_config.py"
+    },
+    {
+      "instance_id": "pylint-dev__pylint-5859",
+      "repo": "pylint-dev/pylint",
+      "directory": "instances/pylint-dev__pylint-5859",
+      "file": "pylint/checkers/misc.py",
+      "target": "EncodingChecker.open",
+      "instruction_file": "problem_statement.txt",
+      "test_cmd": "pytest tests/test_misc.py"
+    },
+    {
+      "instance_id": "pytest-dev__pytest-11148",
+      "repo": "pytest-dev/pytest",
+      "directory": "instances/pytest-dev__pytest-11148",
+      "file": "_pytest/pathlib.py",
+      "target": "import_path",
+      "instruction_file": "problem_statement.txt",
+      "test_cmd": "pytest tests/test_pathlib.py"
+    },
+    {
+      "instance_id": "django__django-11049",
+      "repo": "django/django",
+      "directory": "instances/django__django-11049",
+      "file": "django/db/models/fields/duration.py",
+      "target": "DurationField.get_error_message",
+      "instruction_file": "problem_statement.txt",
+      "test_cmd": "pytest tests/test_durationfield.py"
+    },
+    {
+      "instance_id": "sphinx-doc__sphinx-10325",
+      "repo": "sphinx-doc/sphinx",
+      "directory": "instances/sphinx-doc__sphinx-10325",
+      "file": "sphinx/ext/autodoc/options.py",
+      "target": "inherited_members_option",
+      "instruction_file": "problem_statement.txt",
+      "test_cmd": "pytest tests/test_autodoc.py"
+    },
+    {
+      "instance_id": "psf__requests-1963",
+      "repo": "psf/requests",
+      "directory": "instances/psf__requests-1963",
+      "file": "requests/sessions.py",
+      "target": "SessionRedirect.resolve_redirect_method",
+      "instruction_file": "problem_statement.txt",
+      "test_cmd": "pytest tests/test_sessions.py"
     }
   ]
 }

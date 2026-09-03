@@ -56,7 +56,7 @@ def test_run_benchmark_suite(tmp_path):
 
     summary = run_benchmark_suite(
         manifest_path=manifest,
-        filter_pattern="requests",
+        filter_pattern="psf__requests-1142",
         llm_client=client,
         output_json=output_json,
     )
@@ -171,7 +171,7 @@ def test_run_benchmark_suite_leaves_no_worktree_or_branch_after_success():
     ).stdout
 
     summary = run_benchmark_suite(
-        manifest_path=manifest, filter_pattern="requests", llm_client=client
+        manifest_path=manifest, filter_pattern="psf__requests-1142", llm_client=client
     )
     assert summary.passed == 1
 

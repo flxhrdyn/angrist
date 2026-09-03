@@ -1,0 +1,3 @@
+Add a text/mode parameter to flask.Config.from_file()
+
+Config.from_file currently always opens files in text mode with open(filename). When loading TOML or binary config formats using libraries like tomllib.load, the file must be opened in binary mode ('rb'). Add a `text: bool = True` parameter to from_file so binary files can be loaded.

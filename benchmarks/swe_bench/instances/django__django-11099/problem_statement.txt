@@ -1,0 +1,3 @@
+UsernameValidator allows trailing newline in usernames
+
+ASCIIUsernameValidator uses the regex r'^[\w.@+-]+$'. In Python's re engine, $ matches at the end of the string OR just before a trailing newline (\n). Therefore, values like 'validuser\n' pass validation. The regex should end with \Z instead of $ so that trailing newlines are rejected.

@@ -53,6 +53,72 @@ RESPONSES = {
         "        full_rule = f'{prefix}/{clean_rule}' if prefix else f'/{clean_rule}'\n"
         "        self.rules.append((full_rule, endpoint))\n"
     ),
+    "ASCIIUsernameValidator": (
+        "class ASCIIUsernameValidator(RegexValidator):\n"
+        "    regex = r'^[\\w.@+-]+\\Z'\n"
+        "    message = (\n"
+        "        'Enter a valid username. This value may contain only English letters, '\n"
+        "        'numbers, and @/./+/-/_ characters.'\n"
+        "    )\n"
+    ),
+    "from_file": (
+        "    def from_file(\n"
+        "        self,\n"
+        "        filename: str,\n"
+        "        load: t.Callable[[t.IO[t.Any]], t.Mapping[str, t.Any]],\n"
+        "        silent: bool = False,\n"
+        "        text: bool = True,\n"
+        "    ) -> bool:\n"
+        "        filepath = os.path.join(self.root_path, filename)\n"
+        "        try:\n"
+        "            with open(filepath, 'r' if text else 'rb') as f:\n"
+        "                obj = load(f)\n"
+        "        except OSError:\n"
+        "            if silent:\n"
+        "                return False\n"
+        "            raise\n"
+        "        self.update(obj)\n"
+        "        return True\n"
+    ),
+    "EncodingChecker.open": (
+        "    def open(self) -> None:\n"
+        "        notes = '|'.join(re.escape(note) for note in self.notes)\n"
+        "        regex_string = rf'#\\s*({notes})(?=(:|\\s|\\Z))'\n"
+        "        self._fixme_pattern = re.compile(regex_string, re.IGNORECASE)\n"
+    ),
+    "import_path": (
+        "def import_path(path_str: str, root_str: str = '.') -> types.ModuleType:\n"
+        "    module_name = path_str.replace('/', '.').replace('\\\\', '.').rstrip('.py')\n"
+        "    if module_name in sys.modules:\n"
+        "        return sys.modules[module_name]\n"
+        "    mod = types.ModuleType(module_name)\n"
+        "    mod.__file__ = path_str\n"
+        "    sys.modules[module_name] = mod\n"
+        "    return mod\n"
+    ),
+    "DurationField": (
+        "class DurationField:\n"
+        "    description = 'Duration'\n"
+        "    default_error_messages = {\n"
+        "        'invalid': \"'%(value)s' value has an invalid format. It must be in [DD] [[HH:]MM:]ss[.uuuuuu] format.\"\n"
+        "    }\n\n"
+        "    def get_error_message(self, value: str) -> str:\n"
+        "        return self.default_error_messages['invalid'] % {'value': value}\n"
+    ),
+    "inherited_members_option": (
+        "def inherited_members_option(arg: Any) -> Union[str, Set[str]]:\n"
+        "    if arg in (None, True):\n"
+        "        return {'object'}\n"
+        "    elif isinstance(arg, str):\n"
+        "        return {x.strip() for x in arg.split(',') if x.strip()}\n"
+        "    return arg\n"
+    ),
+    "resolve_redirect_method": (
+        "    def resolve_redirect_method(self, status_code: int, original_method: str) -> str:\n"
+        "        if status_code in (301, 302, 303):\n"
+        "            return 'GET'\n"
+        "        return original_method\n"
+    ),
 }
 
 
@@ -81,6 +147,21 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
             fix_content = RESPONSES["_do_load"]
         elif "add_url_rule" in prompt:
             fix_content = RESPONSES["add_url_rule"]
+        elif "ASCIIUsernameValidator" in prompt:
+            fix_content = RESPONSES["ASCIIUsernameValidator"]
+        elif "from_file" in prompt:
+            fix_content = RESPONSES["from_file"]
+        elif "fixme_pattern" in prompt or "notes" in prompt:
+            fix_content = RESPONSES["EncodingChecker.open"]
+        elif "import_path" in prompt:
+            fix_content = RESPONSES["import_path"]
+        elif "DurationField" in prompt:
+            fix_content = RESPONSES["DurationField"]
+        elif "inherited_members_option" in prompt:
+            fix_content = RESPONSES["inherited_members_option"]
+        elif "resolve_redirect_method" in prompt or "307" in prompt:
+            fix_content = RESPONSES["resolve_redirect_method"]
+
 
 
         response_payload = {

@@ -1,0 +1,3 @@
+Method change on 307/308 redirect in SessionRedirect.resolve_redirects
+
+In requests.sessions.resolve_redirects, responses with HTTP 307 and 308 must retain their original HTTP method (e.g. POST remains POST). Only 301, 302, and 303 should convert the request method to GET.

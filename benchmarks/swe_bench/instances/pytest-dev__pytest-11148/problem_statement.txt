@@ -1,0 +1,3 @@
+Module imported twice under import-mode=importlib in _pytest.pathlib.import_path
+
+When importing modules using importlib mode, import_path re-imports the module even if it was already imported in sys.modules, causing type identity checks and singletons to break. It should check if module_name is already in sys.modules and return it directly.

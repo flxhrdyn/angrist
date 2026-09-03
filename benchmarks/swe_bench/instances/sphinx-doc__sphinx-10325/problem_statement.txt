@@ -1,0 +1,3 @@
+inherited-members should support more than one class
+
+In sphinx.ext.autodoc, inherited_members_option converts :members: option. When arg in (None, True), it returns 'object' as a string. When comma-separated classes are passed, it should parse them into a set of class names, and when arg in (None, True), return {'object'}.

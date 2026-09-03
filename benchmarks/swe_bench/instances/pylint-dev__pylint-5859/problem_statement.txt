@@ -1,0 +1,3 @@
+--notes option ignores note tags that are entirely punctuation
+
+In EncodingChecker.open, the fixme regex uses r'#\s*({notes})\b'. Because \b requires a word boundary (alphanumeric character), note tags that end in punctuation (like 'FIXME:' or '???') fail to match. Update the regex to use r'#\s*({notes})(?=(:|\s|\Z))' instead of \b.
