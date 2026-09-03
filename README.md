@@ -1,8 +1,10 @@
-# Angrist 🗡️
+# Angrist
 
-> *"Iron will cut iron, but Angrist cuts deeper — carving the jewel from Morgoth's Crown."*
+> *"Iron will cut iron, but Angrist cuts deeper: carving the jewel from Morgoth's Crown."*
+
 
 [![CI](https://github.com/flxhrdyn/angrist/actions/workflows/ci.yml/badge.svg)](https://github.com/flxhrdyn/angrist/actions/workflows/ci.yml)
+
 [![PyPI](https://img.shields.io/pypi/v/angrist?color=blue&logo=pypi&logoColor=white)](https://pypi.org/project/angrist/)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)

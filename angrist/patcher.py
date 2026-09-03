@@ -23,8 +23,9 @@ class OpenAICompatibleClient:
     """Talks to any OpenAI-compatible /chat/completions endpoint.
 
     Works unmodified against Groq, local Ollama/vLLM OpenAI-compat
-    servers, or the real OpenAI API — only base_url/api_key/model
+    servers, or the real OpenAI API - only base_url/api_key/model
     change.
+
     """
 
     def __init__(
