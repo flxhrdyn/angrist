@@ -119,6 +119,40 @@ RESPONSES = {
         "            return 'GET'\n"
         "        return original_method\n"
     ),
+    "settle_batch": (
+        "    def settle_batch(\n"
+        "        self,\n"
+        "        transactions: list[Transaction],\n"
+        "        exchange_rates: dict[str, Decimal],\n"
+        "        base_currency: str = \"USD\",\n"
+        "    ) -> SettlementSummary:\n"
+        '        """Settle a batch of multi-currency transactions into base currency."""\n'
+        '        total_gross = Decimal("0.00")\n'
+        '        total_fees = Decimal("0.00")\n'
+        "        settled_count = 0\n"
+        "        declined_count = 0\n\n"
+        "        for tx in transactions:\n"
+        "            if tx.status == TransactionStatus.DECLINED:\n"
+        "                declined_count += 1\n"
+        "                continue\n\n"
+        '            rate = exchange_rates.get(tx.currency, Decimal("1.00"))\n'
+        "            fee = self.calculate_transaction_fee(tx.amount, is_cross_border=tx.is_cross_border)\n"
+        '            converted_amount = (tx.amount * rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)\n'
+        '            converted_fee = (fee * rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)\n\n'
+        "            total_gross += converted_amount\n"
+        "            total_fees += converted_fee\n"
+        "            tx.fee = fee\n"
+        "            tx.status = TransactionStatus.SETTLED\n"
+        "            settled_count += 1\n\n"
+        "        total_net = total_gross - total_fees\n"
+        "        return SettlementSummary(\n"
+        "            total_gross=total_gross,\n"
+        "            total_net=total_net,\n"
+        "            total_fees=total_fees,\n"
+        "            settled_count=settled_count,\n"
+        "            declined_count=declined_count,\n"
+        "        )\n"
+    ),
 }
 
 
@@ -137,7 +171,9 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
         prompt = messages[-1]["content"] if messages else ""
 
         fix_content = "def dummy(): pass\n"
-        if "calculate_discount" in prompt:
+        if "settle_batch" in prompt or "PaymentProcessor" in prompt:
+            fix_content = RESPONSES["settle_batch"]
+        elif "calculate_discount" in prompt:
             fix_content = RESPONSES["calculate_discount"]
         elif "withdraw" in prompt:
             fix_content = RESPONSES["withdraw"]

@@ -59,12 +59,19 @@ def _run(cmd: str, cwd: Path | str) -> subprocess.CompletedProcess:
     """Run a configured lint/test command using POSIX shell argument splitting.
 
     Prepends cwd to PYTHONPATH (H2) so local modules are importable in isolated worktrees.
+
+    Bytecode caching is disabled: the baseline run would leave a .pyc whose
+    header records mtime at 1-second resolution and the source size, and a
+    patch that changes neither (a one-character edit written in the same
+    second) is then silently ignored, so the post-patch run measures the
+    unpatched code.
     """
     args = shlex.split(cmd, posix=True)
     env = os.environ.copy()
     cwd_str = str(Path(cwd).resolve())
     existing = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = f"{cwd_str}{os.pathsep}{existing}" if existing else cwd_str
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
 
     return subprocess.run(
         args, cwd=cwd, env=env, capture_output=True, text=True, check=False
@@ -499,6 +506,9 @@ def run_fix(
                 "branch": branch_name,
                 "reason": None,
                 "diff": diff,
+                # None once auto-merge has cleaned the sandbox up; otherwise the
+                # caller owns this directory and has to remove it.
+                "worktree": None if auto_merge else str(wt_path),
             }
 
     except (TargetNotFoundError, AmbiguousTargetError) as e:
@@ -519,6 +529,7 @@ def fix(
     auto_merge: bool = typer.Option(False),
     base_branch: str = typer.Option(None, help="Defaults to the repo's current branch"),
 ):
+    """Fix a single function or method in an isolated git worktree."""
     if instruction is None and instruction_file is None:
         console.print("[red]Provide --instruction or --instruction-file[/red]")
         raise typer.Exit(code=1)
@@ -547,6 +558,12 @@ def fix(
 
     if result["status"] == "success":
         console.print(f"[green]Success[/green] on branch {result['branch']}")
+        if result.get("worktree"):
+            console.print(
+                f"[dim]Sandbox worktree kept at {result['worktree']}. "
+                f"After merging, remove it with: git worktree remove --force "
+                f"{result['worktree']} && git branch -D {result['branch']}[/dim]"
+            )
         if result["diff"]:
             console.print(result["diff"])
     else:
@@ -555,7 +572,6 @@ def fix(
 
 
 @app.command()
-
 def benchmark(
     dataset: str = typer.Option(
         "benchmarks/swe_bench/manifest.json",

@@ -159,9 +159,10 @@ def apply_patch(file_path: str | Path, qualifier: str, new_node_source: str) -> 
     source = path.read_bytes()
     node = _resolve_target_node(source, qualifier)
 
-    new_bytes = new_node_source.encode()
-    if not new_bytes.endswith(b"\n"):
-        new_bytes += b"\n"
+    # The node span stops at its last token, before the line terminator, so a
+    # replacement carrying its own trailing newline would insert a blank line
+    # on every patch.
+    new_bytes = new_node_source.rstrip("\n").encode()
     # node.start_byte sits at the first character of the definition, past
     # its leading indentation; sanitize_output already re-indented the
     # replacement, so trim its leading whitespace on the first line to

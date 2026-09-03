@@ -163,3 +163,25 @@ def test_apply_patch_on_decorated_method(tmp_path):
     assert "return 100" in content
 
 
+
+
+def test_apply_patch_preserves_blank_line_spacing(tmp_path):
+    """The replacement's own trailing newline must not add a blank line."""
+    source = tmp_path / "m.py"
+    source.write_text("def add(a, b):\n    return a - b\n\n\ndef mul(a, b):\n    return a * b\n")
+
+    apply_patch(source, "add", "def add(a, b):\n    return a + b\n")
+
+    assert source.read_text() == (
+        "def add(a, b):\n    return a + b\n\n\ndef mul(a, b):\n    return a * b\n"
+    )
+
+
+def test_apply_patch_is_idempotent_across_repeated_patches(tmp_path):
+    source = tmp_path / "m.py"
+    source.write_text("def add(a, b):\n    return a - b\n\n\ndef mul(a, b):\n    return a * b\n")
+
+    for _ in range(3):
+        apply_patch(source, "add", "def add(a, b):\n    return a + b\n")
+
+    assert source.read_text().count("\n\n\n") == 1

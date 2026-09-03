@@ -4,6 +4,7 @@ from collections import Counter
 
 import pytest
 
+from angrist.cli import _run as cli_run
 from angrist.cli import run_fix
 
 
@@ -541,3 +542,11 @@ def test_package_has_version():
     assert angrist.__version__ == "0.1.0"
 
 
+
+
+def test_run_disables_bytecode_cache(tmp_path):
+    """A stale .pyc from the baseline run would hide the patch (same mtime second
+    and identical file size), so the post-patch run must never reuse one."""
+    result = cli_run("python -c \"import sys; print(sys.dont_write_bytecode)\"", tmp_path)
+
+    assert result.stdout.strip() == "True"
