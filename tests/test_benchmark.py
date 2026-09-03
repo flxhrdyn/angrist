@@ -166,6 +166,16 @@ def test_run_benchmark_suite_leaves_no_worktree_or_branch_after_success():
     client = StubBenchmarkClient(responses)
     manifest = Path("benchmarks/swe_bench/manifest.json")
 
+    # Clean any pre-existing sandbox worktrees or branches from previous runs
+    from angrist.benchmark import _cleanup_sandbox_branch
+    existing_branches = subprocess.run(
+        ["git", "branch", "--list", "angrist-sandbox-*"], capture_output=True, text=True, check=False
+    ).stdout.splitlines()
+    for b_line in existing_branches:
+        b_name = b_line.replace("*", "").replace("+", "").strip()
+        if b_name:
+            _cleanup_sandbox_branch(b_name, ".")
+
     before = subprocess.run(
         ["git", "worktree", "list", "--porcelain"], capture_output=True, text=True, check=False
     ).stdout
@@ -173,6 +183,7 @@ def test_run_benchmark_suite_leaves_no_worktree_or_branch_after_success():
     summary = run_benchmark_suite(
         manifest_path=manifest, filter_pattern="psf__requests-1142", llm_client=client
     )
+
     assert summary.passed == 1
 
     after = subprocess.run(

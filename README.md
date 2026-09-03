@@ -256,6 +256,19 @@ Evaluated live against `openai/gpt-oss-120b` via Groq across 10 real-world bug i
 - **Zero Worktree Leaks:** 100% of temporary worktrees and branches were systematically cleaned up.
 - **Official SWE-bench Lite Integration:** Angrist includes the complete 300-instance manifest (`benchmarks/swe_bench/official_manifest.json`) directly scraped from Princeton NLP Hugging Face, verifying that 297 of 300 instances (99%) in SWE-bench Lite are single-function targets suited for Angrist.
 
+### Failure Case Root-Cause Analysis:
+Transparency regarding the 2 rejected candidates illustrates how Angrist's conservative gating protects codebases:
+
+1. **`pytest-dev__pytest-11148` (`_pytest.pathlib.import_path`):**
+   - **Target Behavior:** Check `sys.modules` cache before importing a module to prevent duplicate imports under `import-mode=importlib`.
+   - **Failure Reason:** The model over-engineered the fix by synthesizing a full `importlib.util.spec_from_file_location` loader instead of checking the cache dictionary. Because the test used a virtual path that does not exist physically on disk, `spec.loader` evaluated to `None` and raised `ImportError`. The patch also re-imported `sys` inside the body, which was caught by the Lint Gate as a duplicate import (`F811`).
+   - **Gate Outcome:** Both test and lint gates rejected the patch. The active branch remained untouched.
+
+2. **`django__django-11049` (`DurationField.get_error_message`):**
+   - **Target Behavior:** Correct format typo `[DD] [HH:[MM:]]ss` to `[DD] [[HH:]MM:]ss`.
+   - **Failure Reason:** On the initial run, the model used a string `.replace()` strategy that left remnants of the original format in the string, failing the negative assertion `assert "[DD] [HH:[MM:]]ss[.uuuuuu] format." not in msg` (partial fix).
+   - **Gate Outcome:** The test delta gate accurately detected that the failure condition persisted, safely aborting the candidate merge.
+
 To reproduce the benchmark:
 
 ```bash
@@ -265,6 +278,7 @@ angrist benchmark
 # Run against the official 300-instance manifest
 angrist benchmark --dataset benchmarks/swe_bench/official_manifest.json --filter django
 ```
+
 
 
 
