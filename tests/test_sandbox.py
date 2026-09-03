@@ -23,7 +23,8 @@ def test_current_branch_detects_head(git_repo):
 
 
 def test_enter_creates_worktree_and_branch(git_repo):
-    with WorktreeSandbox(base_branch="master", repo_path=git_repo) as wt_path:
+    sandbox = WorktreeSandbox(base_branch="master", repo_path=git_repo)
+    with sandbox as wt_path:
         assert wt_path.exists()
         assert (wt_path / "a.txt").read_text() == "hello\n"
         # worktree must live outside the repo tree
@@ -38,6 +39,8 @@ def test_enter_creates_worktree_and_branch(git_repo):
     ).stdout
     # on clean exit (no exception), worktree/branch are left in place
     assert str(wt_path) in worktrees or wt_path.as_posix() in worktrees
+    sandbox.cleanup()
+
 
 
 

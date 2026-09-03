@@ -22,14 +22,16 @@ def current_branch(repo_path: str | Path = ".") -> str:
     return result.stdout.strip()
 
 
-def _handle_remove_readonly(func, path, exc_info):
-    """Clear readonly bit on Windows files and retry deletion."""
+def _handle_remove_readonly(func, path, exc):
+    """Clear readonly bit on Windows files and retry deletion.
+
+    Signature matches Python 3.12+ shutil.rmtree onexc parameter (func, path, exc).
+    """
     try:
         os.chmod(path, stat.S_IWRITE)
         func(path)
     except OSError:
         pass
-
 
 
 class WorktreeSandbox:
@@ -80,12 +82,11 @@ class WorktreeSandbox:
                 capture_output=True,
                 text=True,
             )
-            # N4 FIX: Ensure physical directory is completely removed on Windows
+            # N7 FIX: Use onexc without ignore_errors so readonly git files are cleared on Windows
             if self.worktree_path.exists():
                 shutil.rmtree(
                     self.worktree_path,
-                    onerror=_handle_remove_readonly,
-                    ignore_errors=True,
+                    onexc=_handle_remove_readonly,
                 )
         if self.branch_name is not None:
             subprocess.run(

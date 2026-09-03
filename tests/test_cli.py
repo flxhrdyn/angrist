@@ -298,7 +298,71 @@ def test_run_fix_delta_gate_detects_new_failure_among_preexisting(git_repo_with_
         max_retries=1,
     )
     assert result["status"] == "failed"
-    assert "passed at baseline now fail" in result["reason"]
+    assert "tests regressed" in result["reason"]
+
+
+def test_run_fix_test_gate_catches_error_conversion(git_repo_with_bug):
+    """N5 verification: turning a FAILED test into an ERROR (ImportError/CollectionError) is caught."""
+    # Baseline has FAILED
+    (git_repo_with_bug / "test_mod.py").write_text("from mod import add\ndef test_it(): assert add(1, 1) == 999\n")
+    subprocess.run(["git", "add", "."], cwd=git_repo_with_bug, check=True)
+    subprocess.run(["git", "commit", "-m", "add failing test"], cwd=git_repo_with_bug, check=True)
+
+    # Patch introduces an import error inside the function body so sanitizer passes,
+    # but running the test produces ERROR / test runner failure
+    broken_fix = "def add(a, b):\n    import nonexistent_module_causes_error\n    return a + b\n"
+    client = StubLLMClient([broken_fix])
+
+    result = run_fix(
+        file_path=str(git_repo_with_bug / "mod.py"),
+        target="add",
+        instruction="fix the bug",
+        llm_client=client,
+        repo_path=str(git_repo_with_bug),
+        base_branch="master",
+        test_cmd="pytest",
+        lint_cmd="python -c pass",
+        max_retries=1,
+    )
+    assert result["status"] == "failed"
+    assert "test runner failed" in result["reason"] or "test/error(s) appeared" in result["reason"] or "still failing" in result["reason"]
+
+
+
+def test_run_fix_lint_gate_catches_different_rule_with_equal_count():
+    """N6 verification: lint gate compares rule signatures, not just line counts."""
+    import subprocess
+
+    from angrist.cli import _check_lint_regression
+
+    base = subprocess.CompletedProcess(
+        args=["ruff"], returncode=1, stdout="a.py:1:1: F401 'unused' imported but unused\n"
+    )
+    # Candidate replaces F401 with E711 (count is still 1, but rule is different)
+    cand = subprocess.CompletedProcess(
+        args=["ruff"], returncode=1, stdout="a.py:9:9: E711 comparison to None should be 'if cond is None:'\n"
+    )
+    res = _check_lint_regression(base, cand)
+    assert res is not None
+    assert "new finding(s) introduced" in res
+
+
+def test_run_fix_aborts_early_on_invalid_baseline_command(git_repo_with_bug):
+    """H2 verification: invalid baseline test command aborts before invoking LLM."""
+    client = StubLLMClient([])  # Client should not even be called
+    result = run_fix(
+        file_path=str(git_repo_with_bug / "mod.py"),
+        target="add",
+        instruction="fix the bug",
+        llm_client=client,
+        repo_path=str(git_repo_with_bug),
+        base_branch="master",
+        test_cmd="python -c 'import sys; sys.exit(4)'",  # Exit code 4 = usage error
+        lint_cmd="python -c pass",
+    )
+    assert result["status"] == "failed"
+    assert "Baseline test command failed with exit code 4" in result["reason"]
+
 
 
 
