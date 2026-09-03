@@ -15,15 +15,15 @@ Angrist repairs bugs in Python functions using LLMs while strictly locking edits
 
 ## Overview
 
-Most AI coding tools operate with full write access to your files. When asked to fix a bug inside a specific function, models frequently rewrite unrelated lines, remove comments, reformat docstrings, or introduce breaking changes to sibling methods.
+Most AI coding tools operate with full write access to your files. When asked to fix a bug inside a specific function, models frequently rewrite unrelated lines, remove comments, or break sibling methods.
 
-Angrist enforces hard architectural limits on the LLM:
+Angrist prevents this through strict architectural boundaries:
 
-First, Tree-sitter parses the file to locate the exact boundaries of the target function or method. Angrist extracts only that target node and provides it to the model alongside your instructions. When the model returns a patch, Angrist verifies that every single byte outside the target node in the original file remains completely identical.
+- **Target Scope Locking:** Tree-sitter isolates the exact target function or method. Every byte outside that target node is guaranteed to remain untouched.
+- **Isolated Worktrees:** Patches, tests, and linter runs execute in temporary Git worktrees. Your active workspace and uncommitted edits are never modified.
+- **Delta Regression Gating:** Candidate patches must pass existing tests and introduce zero new lint errors before they can be merged.
+- **Model Agnostic:** Connects to any OpenAI-compatible endpoint, including local models (Ollama, vLLM) and cloud APIs (Groq, OpenAI).
 
-Second, Angrist never applies changes directly to your active repository. Every patch is generated and tested inside an isolated Git worktree. Angrist runs your test suite and linter against the patched code, compares the results with the baseline before the patch, and rejects candidate changes if tests regress or new linter errors appear.
-
-Angrist is model-agnostic and connects to any OpenAI-compatible API endpoint. You can run it locally with Ollama or vLLM using open-weights models like Qwen 2.5 Coder and Llama 3.3, or connect to cloud providers like Groq and OpenAI without changing your workflow.
 
 
 ---
