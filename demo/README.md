@@ -55,12 +55,24 @@ pytest demo/test_payment_processor.py
 
 ---
 
-## Recording Demo GIF with Charm VHS
+## Generating Demo GIF
 
-If you have `vhs` installed on your machine, run:
+### 1. Primary Method: Python PIL Generator (Recommended)
+Reproducible, deterministic, zero external CLI dependencies (no ConPTY, ttyd, or Chrome required):
 
 ```bash
-vhs demo/demo.tape
+python tools/generate_demo_gif.py
 ```
 
-VHS will render the interactive terminal session directly into `demo/demo.gif`.
+Renders the full `fix` and `benchmark` session into `demo/demo.gif` in seconds.
+
+### 2. Optional: Recording Live with Charm VHS
+For recording live interactive terminal sessions on Linux or macOS environments:
+
+```bash
+# Start local mock server (optional)
+python demo/mock_server.py 8765 &
+
+# Record tape
+vhs demo/demo.tape
+```

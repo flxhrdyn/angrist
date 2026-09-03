@@ -26,10 +26,10 @@ Type " --test-cmd 'pytest demo/test_payment_processor.py'"
 Sleep 500ms
 Enter
 
-Sleep 35s
+Sleep 20s
 
 Type "angrist benchmark"
 Sleep 500ms
 Enter
 
-Sleep 20s
+Sleep 12s

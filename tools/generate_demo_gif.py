@@ -39,7 +39,7 @@ FONT = ImageFont.truetype(FONT_PATH, FONT_SIZE)
 FONT_BOLD = ImageFont.truetype(FONT_PATH, FONT_SIZE)
 
 
-def draw_window_frame(title: str = "angrist - zsh") -> Image.Image:
+def draw_window_frame(title: str = "angrist - terminal") -> Image.Image:
     img = Image.new("RGB", (WIDTH, HEIGHT), BG_COLOR)
     draw = ImageDraw.Draw(img)
 
@@ -96,14 +96,14 @@ def generate_demo():
     for i in range(0, len(cmd1) + 1, 3):
         typed = cmd1[:i]
         lines = [
-            [("felix@macbook", GREEN_COLOR), (":", DIM_COLOR), ("~/angrist", CYAN_COLOR), ("$ ", PROMPT_COLOR), (typed, TEXT_COLOR)]
+            [("felix@dev", GREEN_COLOR), (":", DIM_COLOR), ("~/angrist", CYAN_COLOR), ("$ ", PROMPT_COLOR), (typed, TEXT_COLOR)]
         ]
         frames.append(render_terminal(lines, cursor=True))
         durations.append(40)
 
     # Execute fix
     fix_output = [
-        [("felix@macbook", GREEN_COLOR), (":", DIM_COLOR), ("~/angrist", CYAN_COLOR), ("$ ", PROMPT_COLOR), (cmd1, TEXT_COLOR)],
+        [("felix@dev", GREEN_COLOR), (":", DIM_COLOR), ("~/angrist", CYAN_COLOR), ("$ ", PROMPT_COLOR), (cmd1, TEXT_COLOR)],
         [("Tree-sitter: ", CYAN_COLOR), ("Target 'PaymentProcessor.settle_batch' locked (lines 80-115)", TEXT_COLOR)],
         [("Git Sandbox: ", CYAN_COLOR), ("Created isolated worktree 'angrist-sandbox-8a12c4'", DIM_COLOR)],
         [("Baseline:    ", PEACH_COLOR), ("pytest demo/test_payment_processor.py -> 1 FAILED (captured)", YELLOW_COLOR)],
@@ -125,13 +125,13 @@ def generate_demo():
     for i in range(0, len(cmd2) + 1, 2):
         typed = cmd2[:i]
         curr = list(bench_prefix)
-        curr[-1] = [("felix@macbook", GREEN_COLOR), (":", DIM_COLOR), ("~/angrist", CYAN_COLOR), ("$ ", PROMPT_COLOR), (typed, TEXT_COLOR)]
+        curr[-1] = [("felix@dev", GREEN_COLOR), (":", DIM_COLOR), ("~/angrist", CYAN_COLOR), ("$ ", PROMPT_COLOR), (typed, TEXT_COLOR)]
         frames.append(render_terminal(curr, cursor=True))
         durations.append(45)
 
     # Benchmark Results Table (Compact & Elegant)
     bench_table = [
-        [("felix@macbook", GREEN_COLOR), (":", DIM_COLOR), ("~/angrist", CYAN_COLOR), ("$ ", PROMPT_COLOR), (cmd2, TEXT_COLOR)],
+        [("felix@dev", GREEN_COLOR), (":", DIM_COLOR), ("~/angrist", CYAN_COLOR), ("$ ", PROMPT_COLOR), (cmd2, TEXT_COLOR)],
         [("SWE-bench Lite Evaluation (10-Instance Curated Suite):", CYAN_COLOR)],
         [("-" * 72, DIM_COLOR)],
         [("Instance ID                     Target Function        Status   Duration", DIM_COLOR)],
