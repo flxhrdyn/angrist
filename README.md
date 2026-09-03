@@ -7,7 +7,7 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 
-A fast, lightweight, and scope-locked AI micro-agent for targeted Python bug repairs. Constrains LLM edits directly to a single AST node and validates patches in isolated Git worktrees.
+Angrist repairs bugs in Python functions using LLMs while strictly locking edits to the target AST node. It tests every patch in an isolated Git worktree before touching your code, preventing unintended modifications across the rest of the file.
 
 ![Angrist Demo](demo/demo.gif)
 
@@ -15,15 +15,16 @@ A fast, lightweight, and scope-locked AI micro-agent for targeted Python bug rep
 
 ## Overview
 
-Fixing bugs with AI coding assistants typically results in either full-file overwrites that delete comments or unbounded agentic drift that breaks unrelated code.
+Most AI coding tools operate with full write access to your files. When asked to fix a bug inside a specific function, models frequently rewrite unrelated lines, remove comments, reformat docstrings, or introduce breaking changes to sibling methods.
 
-Angrist bridges this gap by combining:
-- **Tree-sitter AST Scope Guard:** Restricts LLM edits to the byte range of the target function or method body. Any edits to sibling functions, class attributes, uncalled top-level blocks, or target renames/deletions trigger an immediate rollback.
-- **Git Worktree Isolation:** Executes patch generation, unit test evaluation, and linter runs in ephemeral, isolated Git worktrees, keeping your active workspace and uncommitted edits untouched.
-- **Delta Test Regression Gating:** Runs test commands before and after patch application to differentiate pre-existing baseline failures from new regressions, and detects syntax or collection breaks.
-- **Set-Based Multi-Format Lint Gating:** Compares linter rule signatures `(file, rule_code)` using both structured JSON and concise text parsers, preventing false rejections from line shifts while rejecting real regressions.
-- **Model-Agnostic Inference:** Operates against any OpenAI-compatible `/chat/completions` endpoint, supporting local models (Ollama, vLLM, Qwen 2.5 Coder, Llama 3.3) and cloud APIs (Groq, OpenRouter, OpenAI).
-- **Atomic Cross-Platform Cleanup:** Automatically reclaims read-only Git metadata across Windows and Unix platforms with zero leftover sandbox branches or directories.
+Angrist enforces hard architectural limits on the LLM:
+
+First, Tree-sitter parses the file to locate the exact boundaries of the target function or method. Angrist extracts only that target node and provides it to the model alongside your instructions. When the model returns a patch, Angrist verifies that every single byte outside the target node in the original file remains completely identical.
+
+Second, Angrist never applies changes directly to your active repository. Every patch is generated and tested inside an isolated Git worktree. Angrist runs your test suite and linter against the patched code, compares the results with the baseline before the patch, and rejects candidate changes if tests regress or new linter errors appear.
+
+Angrist is model-agnostic and connects to any OpenAI-compatible API endpoint. You can run it locally with Ollama or vLLM using open-weights models like Qwen 2.5 Coder and Llama 3.3, or connect to cloud providers like Groq and OpenAI without changing your workflow.
+
 
 ---
 
