@@ -3,44 +3,33 @@
 > *"As Angrist carved the Silmaril from the Iron Crown of Morgoth: excise the flaw, preserve the tree."*
 
 [![CI](https://github.com/flxhrdyn/angrist/actions/workflows/ci.yml/badge.svg)](https://github.com/flxhrdyn/angrist/actions/workflows/ci.yml)
-
-
 [![PyPI](https://img.shields.io/pypi/v/angrist?color=blue&logo=pypi&logoColor=white)](https://pypi.org/project/angrist/)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg?logo=python&logoColor=white)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
 
-
-Angrist is a command-line tool for repairing targeted bugs in Python codebases using LLMs without letting the model modify anything outside the target function or method.
-
-Instead of allowing an AI agent to edit entire files, rewrite unrelated logic, or delete comments, Angrist locks editing scope directly to a single AST node with Tree-sitter and tests every candidate patch inside an isolated Git worktree before applying it to your branch.
-
-Compatible with local runtimes (Ollama, vLLM) and cloud providers (Groq, OpenRouter, OpenAI).
+A fast, lightweight, and scope-locked AI micro-agent for targeted Python bug repairs. Constrains LLM edits directly to a single AST node and validates patches in isolated Git worktrees.
 
 ![Angrist Demo](demo/demo.gif)
 
 ---
 
-## Why Angrist?
+## Overview
 
-Most AI coding assistants struggle with precision on targeted bug fixes:
+Fixing bugs with AI coding assistants typically results in either full-file overwrites that delete comments or unbounded agentic drift that breaks unrelated code.
 
-1. **File Overwriting:** Asking an LLM to fix a 3-line bug often results in the model rewriting the whole file, reformatting docstrings, or deleting helpful inline comments.
-2. **Scope Creep:** Models frequently hallucinate edits to sibling functions, class attributes, or top-level imports that break other parts of your application.
-3. **Workspace Pollution:** Autonomous agents modify files directly in your active working tree, making it difficult to review what changed or roll back partial failures.
-
-Angrist replaces unbounded agentic permissions with strict structural safety:
-
-- **Tree-sitter AST Scope Enforcement:** Only the exact target function or class method body can be modified. Everything else in the source file remains byte-identical.
-- **Isolated Worktree Execution:** Repairs, linter checks, and test executions run in temporary Git worktrees. Your active workspace and uncommitted edits are never touched.
-- **Regression and Lint Gates:** Candidate patches must pass pre-existing tests and must not introduce new lint errors before they can be merged.
-
-
+Angrist bridges this gap by combining:
+- **Tree-sitter AST Scope Guard:** Restricts LLM edits to the byte range of the target function or method body. Any edits to sibling functions, class attributes, uncalled top-level blocks, or target renames/deletions trigger an immediate rollback.
+- **Git Worktree Isolation:** Executes patch generation, unit test evaluation, and linter runs in ephemeral, isolated Git worktrees, keeping your active workspace and uncommitted edits untouched.
+- **Delta Test Regression Gating:** Runs test commands before and after patch application to differentiate pre-existing baseline failures from new regressions, and detects syntax or collection breaks.
+- **Set-Based Multi-Format Lint Gating:** Compares linter rule signatures `(file, rule_code)` using both structured JSON and concise text parsers, preventing false rejections from line shifts while rejecting real regressions.
+- **Model-Agnostic Inference:** Operates against any OpenAI-compatible `/chat/completions` endpoint, supporting local models (Ollama, vLLM, Qwen 2.5 Coder, Llama 3.3) and cloud APIs (Groq, OpenRouter, OpenAI).
+- **Atomic Cross-Platform Cleanup:** Automatically reclaims read-only Git metadata across Windows and Unix platforms with zero leftover sandbox branches or directories.
 
 ---
 
 ## Installation
 
-Install using `uv` (recommended), `pipx`, or standard `pip`:
+Install using `uv` (recommended) or `pipx`:
 
 ```bash
 uv tool install angrist
@@ -96,8 +85,8 @@ ANGRIST_LLM_MODEL=llama-3.3-70b-versatile
 
 ## Quick Start
 
-### 1. Fix a Standalone Function
-Fix a targeted top-level function without affecting anything else in the file:
+### 1. Fix a Class Method
+Target a specific method inside a class, ensuring sibling methods and class attributes remain untouched:
 
 ```bash
 angrist fix \
@@ -107,7 +96,7 @@ angrist fix \
   --test-cmd "pytest demo/test_payment_processor.py"
 ```
 
-### 2. Fix a Module Function
+### 2. Fix a Standalone Module Function
 Target a top-level function directly:
 
 ```bash
@@ -117,9 +106,8 @@ angrist fix \
   --instruction "Ensure query parameters with empty strings preserve key names"
 ```
 
-
 ### 3. Read Long Instructions from File
-For complex bugs or issue descriptions:
+For complex bugs, traceback dumps, or issue descriptions:
 
 ```bash
 angrist fix \
@@ -129,7 +117,7 @@ angrist fix \
 ```
 
 ### 4. Automatic Safe Merge
-Once the patch passes AST validation, lint gates, and regression test suites, merge it back into the base branch automatically (safely aborts if your working tree has uncommitted changes):
+Once the patch passes AST validation, lint gates, and regression test suites, merge it back into the base branch automatically (aborts if your working tree has uncommitted changes):
 
 ```bash
 angrist fix \
@@ -143,91 +131,61 @@ angrist fix \
 Evaluate Angrist's accuracy and gating against real-world SWE-bench Lite bugs:
 
 ```bash
-# Run all benchmark instances
+# Run the curated 10-instance benchmark suite
 angrist benchmark
 
-# Run filtered benchmark subset
-angrist benchmark --filter requests
-
-# Output custom JSON results for CI
-angrist benchmark --output-json benchmark_results.json
+# Run against the official 300-instance manifest
+angrist benchmark --dataset benchmarks/swe_bench/official_manifest.json --filter django
 ```
 
 ---
 
 ## Command-Line Interface
 
-Angrist provides two core subcommands: `fix` and `benchmark`.
+All commands support comprehensive options for terminal use and pipeline composition:
 
-### `angrist fix`
+| Command | Description |
+|---|---|
+| `angrist fix --file <path> --target <name>` | Execute isolated, AST-constrained repair on a function or class method. |
+| `angrist benchmark` | Run evaluation suite across SWE-bench Lite benchmark instances. |
+| `angrist --help` | Display command-line options and usage flags. |
 
-| Option | Type | Description |
+### Key Options for `angrist fix`:
+
+| Option | Default | Description |
 |---|---|---|
-| `--file` | `Path` | **[Required]** Path to the Python file containing the bug. |
-| `--target` | `str` | **[Required]** `function_name` or `ClassName.method_name`. |
-| `--instruction` | `str` | Free-text instruction describing what to fix. |
-| `--instruction-file` | `Path` | Path to a markdown/text file containing detailed instructions. |
-| `--model` | `str` | LLM model name (overrides `.env` and environment variables). |
-| `--api-key` | `str` | LLM API key (overrides `.env` and environment variables). |
-| `--base-url` | `str` | OpenAI-compatible endpoint base URL. |
-| `--test-cmd` | `str` | Test command to execute (default: `pytest`). |
-| `--lint-cmd` | `str` | Linter command to execute (default: `ruff check`). |
-| `--auto-merge` | `bool` | Auto-merge verified branch into base branch (default: `False`). |
-| `--base-branch` | `str` | Base Git branch (default: active repo branch). |
-
-### `angrist benchmark`
-
-| Option | Type | Description |
-|---|---|---|
-| `--dataset` | `Path` | Path to benchmark `manifest.json` (default: `benchmarks/swe_bench/manifest.json`). |
-| `--filter` | `str` | Regex pattern to filter by instance ID or repository name. |
-| `--output-json` | `Path` | File path to export evaluation metrics JSON (default: `benchmark_results.json`). |
-| `--model` | `str` | Override LLM model for the benchmark run. |
-| `--max-retries` | `int` | Maximum repair attempts per benchmark instance (default: `3`). |
+| `--file PATH` | Required | Relative path to the target Python source file. |
+| `--target IDENT` | Required | Function name or `ClassName.method_name` to repair. |
+| `--instruction TEXT` | Optional | Plain-text repair instruction or description of the bug. |
+| `--instruction-file PATH` | Optional | Path to file containing repair instructions. |
+| `--test-cmd CMD` | `"pytest"` | Test command to execute in the sandbox before and after patching. |
+| `--lint-cmd CMD` | `"ruff check ."` | Linter command used to verify no new errors are introduced. |
+| `--auto-merge` | `False` | Merge the verified branch into your current branch automatically. |
+| `--max-retries INT` | `3` | Maximum LLM regeneration attempts on AST or test gate failure. |
 
 ---
 
 ## Architecture
 
-Angrist uses an atomic, unidirectional verification pipeline:
+Angrist uses a strictly decoupled, unidirectional pipeline:
 
 ```
-                      [ User Invocation ]
-                               │
-                               ▼
-                    [ Target AST Resolution ]
-           (Tree-sitter locates target node byte bounds)
-                               │
-                               ▼
-                  [ Ephemeral Worktree Sandbox ]
-           (git worktree add -b angrist-sandbox-xxxx)
-                               │
-                               ▼
-                   [ Baseline Test & Lint Run ]
-           (Pre-flight health check & delta baseline)
-                               │
-                               ▼
-                ┌──────> [ LLM Generation ]
-                │              │
-                │              ▼
-                │      [ Output Sanitizer ]
-                │  (Fences stripped, indentation matched)
-                │              │
-                │              ▼
-                │    [ AST Scope Verification ]
-  Retry Loop    │ (Target changed only? Collisions? Deletions?)
-  (max retries) │              │
-                ├────── [ Scope Violation? ]
-                │              │ PASS
-                │              ▼
-                │     [ Delta Test & Lint Gate ]
-                │  (Set-based lint rules + FAILED/ERROR catch)
-                │              │
-                └────── [ Test Regressed? ]
-                               │ PASS
-                               ▼
-                 [ Git Commit & Clean Handshake ]
-             (Auto-merge if requested, or branch kept)
+Python Source File & Target Identifier
+    │
+    ▼
+[ angrist.ast_guard ]     Tree-sitter AST coordinate locking (preserves all sibling code)
+    │
+    ▼
+[ angrist.sandbox ]       Isolated Git worktree creation & baseline test/lint check
+    │
+    ▼
+[ angrist.patcher ]       Model-agnostic prompt synthesis & syntactic output sanitization
+    │
+    ▼
+[ angrist.gate ]          AST scope invariance check, delta test run & lint comparison
+    │
+    ▼
+[ angrist.merge ]         Atomic branch merge or immediate rollback on failure
 ```
 
 ---
@@ -281,9 +239,6 @@ angrist benchmark
 angrist benchmark --dataset benchmarks/swe_bench/official_manifest.json --filter django
 ```
 
-
-
-
 ---
 
 ## Capabilities, Scope & Known Limitations
@@ -321,12 +276,15 @@ angrist benchmark --dataset benchmarks/swe_bench/official_manifest.json --filter
 
 ## Contributing
 
-Contributions are welcome! Please run the test suite and linter before submitting a pull request:
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions, code style guidelines, and pull request workflows.
 
-```bash
-pytest tests/ -v
-ruff check .
-```
+Please also read and adhere to our [Code of Conduct](CODE_OF_CONDUCT.md).
+
+---
+
+## Security
+
+To report security issues or vulnerabilities, please review our [Security Policy](SECURITY.md).
 
 ---
 
