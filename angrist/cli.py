@@ -33,16 +33,14 @@ console = Console()
 def _run(cmd: str, cwd) -> subprocess.CompletedProcess:
     """Run a configured lint/test command.
 
-    Split with shlex and executed without a shell: the command string
-    comes from --test-cmd / --lint-cmd, and passing it through a shell
-    would make any metacharacter in it (or in a config file supplying
-    it) execute as shell code.
+    Normalizes backslashes to forward slashes so POSIX quote stripping works
+    without corrupting Windows path delimiters.
     """
-    args = shlex.split(cmd, posix=(os.name != "nt"))
+    normalized = cmd.replace("\\", "/")
+    args = shlex.split(normalized)
     return subprocess.run(
         args, cwd=cwd, capture_output=True, text=True, check=False
     )
-
 
 
 def run_fix(
@@ -60,7 +58,18 @@ def run_fix(
     repo_path = Path(repo_path)
     if base_branch is None:
         base_branch = current_branch(repo_path)
-    rel_file = Path(file_path).resolve().relative_to(repo_path.resolve())
+
+    # H4 FIX: Gracefully handle paths outside the repository
+    try:
+        rel_file = Path(file_path).resolve().relative_to(repo_path.resolve())
+    except ValueError:
+        return {
+            "status": "failed",
+            "branch": None,
+            "reason": f"File '{file_path}' is not within repository '{repo_path}'",
+            "diff": None,
+        }
+
     target_file = repo_path / rel_file
 
     if not target_file.exists():
@@ -71,6 +80,7 @@ def run_fix(
             "diff": None,
         }
 
+    # Step 1: Pre-flight target validation before creating sandbox
     try:
         extract_node_source(target_file, target)
     except (TargetNotFoundError, AmbiguousTargetError) as e:
@@ -81,15 +91,8 @@ def run_fix(
     try:
         with sandbox as wt_path:
             sandboxed_file = wt_path / rel_file
-            # Baseline source held in memory, never as a scratch file in
-            # the worktree -- a scratch file would be swept into the
-            # sandbox commit by `git add .`.
             original_source = sandboxed_file.read_text()
 
-            # Baseline validation run: real repos have pre-existing lint
-            # noise and failing tests. Gating on absolute exit codes would
-            # fail every run regardless of the patch, so record the
-            # starting state and compare deltas later.
             baseline_lint = _run(lint_cmd, wt_path)
             baseline_test = _run(test_cmd, wt_path)
 
@@ -97,7 +100,7 @@ def run_fix(
 
             failure_detail = None
             patched = False
-            for attempt in range(1, max_retries + 1):
+            for _ in range(1, max_retries + 1):
                 target_source = extract_node_source(sandboxed_file, target)
                 prompt = build_patch_prompt(target_source, instruction, failure_detail)
                 raw = llm_client.complete(prompt)
@@ -112,10 +115,11 @@ def run_fix(
                     break
                 except (SanitizationError, ASTScopeViolationError) as e:
                     failure_detail = str(e)
-                    # restore pristine source before the next attempt
                     sandboxed_file.write_text(original_source)
 
+            # H1 FIX: Clean up sandbox on failure before returning
             if not patched:
+                sandbox.cleanup()
                 return {
                     "status": "failed",
                     "branch": None,
@@ -131,9 +135,11 @@ def run_fix(
                 lint_result.returncode != 0
                 and baseline_lint.returncode == 0
             ):
+                branch = sandbox.branch_name
+                sandbox.cleanup()
                 return {
                     "status": "failed",
-                    "branch": sandbox.branch_name,
+                    "branch": branch,
                     "reason": (
                         "lint regressed (clean before the patch): "
                         f"{lint_result.stdout}\n{lint_result.stderr}"
@@ -146,9 +152,11 @@ def run_fix(
                 test_result.returncode != 0
                 and baseline_test.returncode == 0
             ):
+                branch = sandbox.branch_name
+                sandbox.cleanup()
                 return {
                     "status": "failed",
-                    "branch": sandbox.branch_name,
+                    "branch": branch,
                     "reason": (
                         "tests regressed (passing before the patch): "
                         f"{test_result.stdout}\n{test_result.stderr}"
@@ -156,9 +164,11 @@ def run_fix(
                     "diff": None,
                 }
             if test_result.returncode != 0 and baseline_test.returncode != 0:
+                branch = sandbox.branch_name
+                sandbox.cleanup()
                 return {
                     "status": "failed",
-                    "branch": sandbox.branch_name,
+                    "branch": branch,
                     "reason": (
                         "tests still failing after the patch (they were "
                         "already failing at baseline, so this fix did not "
@@ -170,7 +180,6 @@ def run_fix(
             diff = subprocess.run(
                 ["git", "diff", base_branch], cwd=wt_path, capture_output=True, text=True, check=False
             ).stdout
-
 
             subprocess.run(
                 ["git", "add", "."], cwd=wt_path, check=True, capture_output=True, text=True
@@ -185,7 +194,15 @@ def run_fix(
 
             branch_name = sandbox.branch_name
 
+            # M4 FIX: Ensure we checkout base_branch before merging
             if auto_merge:
+                subprocess.run(
+                    ["git", "checkout", base_branch],
+                    cwd=repo_path,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
                 subprocess.run(
                     ["git", "merge", branch_name],
                     cwd=repo_path,

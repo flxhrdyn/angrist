@@ -1,8 +1,18 @@
 from __future__ import annotations
 
+import textwrap
+from pathlib import Path
 from typing import Protocol
 
 import httpx
+
+from angrist.ast_guard import (
+    AmbiguousTargetError,
+    TargetNotFoundError,
+    _find_target_nodes,
+    _inner_definition,
+    _make_parser,
+)
 
 
 class LLMClient(Protocol):
@@ -45,7 +55,6 @@ class OpenAICompatibleClient:
         return response.json()["choices"][0]["message"]["content"]
 
 
-
 def build_patch_prompt(
     target_source: str, instruction: str, violation_detail: str | None = None
 ) -> str:
@@ -68,12 +77,6 @@ def build_patch_prompt(
             "anything else.",
         )
     return "\n\n".join(parts)
-
-
-import textwrap
-from pathlib import Path
-
-from angrist.ast_guard import _iter_function_defs, _make_parser, parse_target
 
 
 class SanitizationError(Exception):
@@ -114,10 +117,12 @@ def sanitize_output(raw: str, target_indent_cols: int) -> str:
             "replacement function or class body, with no prose."
         )
 
-    definitions = [
-        c for c in root.children
-        if c.type in ("function_definition", "class_definition")
-    ]
+    definitions = []
+    for c in root.children:
+        inner = _inner_definition(c)
+        if inner.type in ("function_definition", "class_definition"):
+            definitions.append(c)
+
     if len(definitions) != 1 or len(root.children) != 1:
         raise SanitizationError(
             f"Expected exactly one function or class definition and nothing "
@@ -131,17 +136,8 @@ def sanitize_output(raw: str, target_indent_cols: int) -> str:
 
 
 def _resolve_target_node(source: bytes, qualifier: str):
-    from angrist.ast_guard import AmbiguousTargetError, TargetNotFoundError
-
-    class_name, func_name = parse_target(qualifier)
     tree = _make_parser().parse(source)
-
-    matches = []
-    for node, _ in _iter_function_defs(tree.root_node, class_name):
-        name_node = node.child_by_field_name("name")
-        if name_node is not None and name_node.text.decode() == func_name:
-            matches.append(node)
-
+    matches = _find_target_nodes(tree.root_node, qualifier)
     if not matches:
         raise TargetNotFoundError(f"No target matching '{qualifier}' found")
     if len(matches) > 1:
@@ -176,4 +172,3 @@ def apply_patch(file_path: str | Path, qualifier: str, new_node_source: str) -> 
 
     updated = source[: node.start_byte] + new_bytes + source[node.end_byte :]
     path.write_bytes(updated)
-

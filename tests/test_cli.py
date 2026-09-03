@@ -204,3 +204,46 @@ def test_run_fix_fails_on_missing_target_without_creating_sandbox(git_repo_with_
     ).stdout
     assert len(worktrees.strip().splitlines()) == 1
 
+
+def test_run_fix_cleans_up_worktree_on_failure(git_repo_with_bug):
+    """H1 verification: failing runs clean up the temporary worktree."""
+    client = StubLLMClient(["def add(a, b):\n    return 'bad'\n"] * 3)
+    result = run_fix(
+        file_path=str(git_repo_with_bug / "mod.py"),
+        target="add",
+        instruction="fix the bug",
+        llm_client=client,
+        repo_path=str(git_repo_with_bug),
+        base_branch="master",
+        test_cmd="pytest",
+        lint_cmd="python -c pass",
+        max_retries=1,
+    )
+    assert result["status"] == "failed"
+    worktrees = subprocess.run(
+        ["git", "worktree", "list"],
+        cwd=git_repo_with_bug,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    # Only the main worktree should remain
+    assert len(worktrees.strip().splitlines()) == 1
+
+
+def test_run_fix_rejects_file_outside_repo(git_repo_with_bug, tmp_path):
+    """H4 verification: file outside repository returns clean error without unhandled ValueError."""
+    outside_file = tmp_path / "outside.py"
+    outside_file.write_text("def foo(): pass\n")
+    client = StubLLMClient([])
+    result = run_fix(
+        file_path=str(outside_file),
+        target="foo",
+        instruction="fix it",
+        llm_client=client,
+        repo_path=str(git_repo_with_bug),
+    )
+    assert result["status"] == "failed"
+    assert "not within repository" in result["reason"]
+
+

@@ -154,3 +154,107 @@ def test_validate_scope_rejects_class_attribute_edit(tmp_path):
     with pytest.raises(ASTScopeViolationError):
         validate_scope(original, candidate, "Foo.a")
 
+
+def test_extract_decorated_function(tmp_path):
+    f = _write(
+        tmp_path, "deco.py",
+        "@property\ndef total(self):\n    return 42\n",
+    )
+    src = extract_node_source(f, "total")
+    assert "@property" in src
+    assert "def total(self):" in src
+
+
+def test_extract_and_validate_nested_class_method(tmp_path):
+    original = _write(
+        tmp_path, "nested.py",
+        "class Outer:\n"
+        "    class Inner:\n"
+        "        def target(self):\n"
+        "            return 1\n"
+        "        def sibling(self):\n"
+        "            return 2\n",
+    )
+    src = extract_node_source(original, "Outer.Inner.target")
+    assert "return 1" in src
+
+    candidate = _write(
+        tmp_path, "nested_cand.py",
+        "class Outer:\n"
+        "    class Inner:\n"
+        "        def target(self):\n"
+        "            return 100\n"
+        "        def sibling(self):\n"
+        "            return 2\n",
+    )
+    validate_scope(original, candidate, "Outer.Inner.target")  # should not raise
+
+    violating = _write(
+        tmp_path, "nested_viol.py",
+        "class Outer:\n"
+        "    class Inner:\n"
+        "        def target(self):\n"
+        "            return 100\n"
+        "        def sibling(self):\n"
+        "            return 999\n",
+    )
+    with pytest.raises(ASTScopeViolationError):
+        validate_scope(original, violating, "Outer.Inner.target")
+
+
+def test_validate_scope_allows_target_expansion_with_unnamed_node_after(tmp_path):
+    """C2 verification: expanding target must not fail on unnamed if_statement afterwards."""
+    original = _write(
+        tmp_path, "orig.py",
+        "def foo():\n    return 1\n\nif __name__ == '__main__':\n    print('hello')\n",
+    )
+    candidate = _write(
+        tmp_path, "cand.py",
+        "def foo():\n    # Significantly expanded\n    x = 100\n    y = 200\n    return x + y\n\nif __name__ == '__main__':\n    print('hello')\n",
+    )
+    validate_scope(original, candidate, "foo")  # should not raise
+
+
+def test_validate_scope_rejects_target_rename(tmp_path):
+    """C3 verification: renaming the target function is rejected as a scope violation."""
+    original = _write(
+        tmp_path, "orig.py",
+        "def foo():\n    return 1\n\ndef bar():\n    return 2\n",
+    )
+    candidate = _write(
+        tmp_path, "cand.py",
+        "def renamed_foo():\n    return 1\n\ndef bar():\n    return 2\n",
+    )
+    with pytest.raises(ASTScopeViolationError):
+        validate_scope(original, candidate, "foo")
+
+
+def test_validate_scope_rejects_target_deletion(tmp_path):
+    """C3 verification: deleting the target function is rejected as a scope violation."""
+    original = _write(
+        tmp_path, "orig.py",
+        "def foo():\n    return 1\n\ndef bar():\n    return 2\n",
+    )
+    candidate = _write(
+        tmp_path, "cand.py",
+        "def bar():\n    return 2\n",
+    )
+    with pytest.raises(ASTScopeViolationError):
+        validate_scope(original, candidate, "foo")
+
+
+def test_validate_scope_with_duplicate_named_nodes(tmp_path):
+    """M2 verification: duplicate top-level names do not overwrite each other in key map."""
+    original = _write(
+        tmp_path, "orig.py",
+        "def target():\n    return 0\n\ndef helper():\n    return 1\n\ndef helper():\n    return 2\n",
+    )
+    # Edit the first helper (which in M2 was previously vulnerable to being overwritten)
+    violating = _write(
+        tmp_path, "cand.py",
+        "def target():\n    return 100\n\ndef helper():\n    return 999\n\ndef helper():\n    return 2\n",
+    )
+    with pytest.raises(ASTScopeViolationError):
+        validate_scope(original, violating, "target")
+
+

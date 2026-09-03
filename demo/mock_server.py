@@ -8,7 +8,6 @@ from __future__ import annotations
 import json
 import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from threading import Thread
 
 RESPONSES = {
     "calculate_discount": (

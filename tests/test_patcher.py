@@ -143,3 +143,23 @@ def test_apply_patch_on_class_method(tmp_path):
     content = target.read_text()
     assert "return x * 5" in content
 
+
+def test_sanitize_allows_decorated_definition():
+    raw = "@property\ndef total(self):\n    return 42\n"
+    res = sanitize_output(raw, 0)
+    assert "@property" in res
+    assert "def total(self):" in res
+
+
+def test_apply_patch_on_decorated_method(tmp_path):
+    target = tmp_path / "mod.py"
+    target.write_text(
+        "class Foo:\n    @property\n    def total(self):\n        return 1\n"
+    )
+    apply_patch(
+        target, "Foo.total", "    @property\n    def total(self):\n        return 100\n"
+    )
+    content = target.read_text()
+    assert "return 100" in content
+
+
