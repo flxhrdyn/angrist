@@ -9,4 +9,5 @@ build/
 .ruff_cache/
 .env
 benchmark_results.json
+docs/superpowers/
 
