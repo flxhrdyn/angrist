@@ -1,0 +1,2 @@
+Blueprint.add_url_rule creates double slashes when url_prefix has a trailing slash.
+Ensure url_prefix trailing slash is handled cleanly so rules like '/api/' and '/login' produce '/api/login'.

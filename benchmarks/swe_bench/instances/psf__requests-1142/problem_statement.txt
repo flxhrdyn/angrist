@@ -1,0 +1,2 @@
+PreparedRequest.prepare_url fails when parameters are formatted into the query string.
+Ensure parameters are joined with '&' standard delimiter and not corrupted.

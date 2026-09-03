@@ -1,0 +1,2 @@
+Schema._do_load fails to cast string values to int for integer fields.
+Ensure integer fields convert valid numeric string input to int.

@@ -1,0 +1,36 @@
+{
+  "dataset": "swe_bench_lite_curated",
+  "version": "1.0",
+  "instances": [
+    {
+      "instance_id": "psf__requests-1142",
+      "repo": "psf/requests",
+      "directory": "instances/psf__requests-1142",
+      "file": "requests/models.py",
+      "target": "PreparedRequest.prepare_url",
+      "instruction_file": "problem_statement.txt",
+      "test_cmd": "pytest tests/test_models.py",
+      "category": "url_parsing"
+    },
+    {
+      "instance_id": "marshmallow__marshmallow-1343",
+      "repo": "marshmallow-code/marshmallow",
+      "directory": "instances/marshmallow__marshmallow-1343",
+      "file": "marshmallow/schema.py",
+      "target": "Schema._do_load",
+      "instruction_file": "problem_statement.txt",
+      "test_cmd": "pytest tests/test_schema.py",
+      "category": "serialization"
+    },
+    {
+      "instance_id": "pallets__flask-4045",
+      "repo": "pallets/flask",
+      "directory": "instances/pallets__flask-4045",
+      "file": "flask/blueprints.py",
+      "target": "Blueprint.add_url_rule",
+      "instruction_file": "problem_statement.txt",
+      "test_cmd": "pytest tests/test_blueprints.py",
+      "category": "routing"
+    }
+  ]
+}
