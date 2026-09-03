@@ -2,7 +2,33 @@
 name = "angrist"
 version = "0.1.0"
 description = "Git-worktree isolated, AST-scope-locked micro-agent for precise single-function code fixes"
+readme = "README.md"
+license = "MIT"
+authors = [
+    { name = "Felix Hardiyan" },
+]
 requires-python = ">=3.11"
+keywords = [
+    "ast",
+    "tree-sitter",
+    "git-worktree",
+    "llm",
+    "ai",
+    "code-repair",
+    "bug-fix",
+    "swe-bench",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Bug Tracking",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Software Development :: Testing",
+]
 dependencies = [
     "typer>=0.12",
     "rich>=13.0",
@@ -12,12 +38,22 @@ dependencies = [
     "python-dotenv>=1.0",
 ]
 
-
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "ruff>=0.5"]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.5",
+    "build>=1.0",
+    "twine>=5.0",
+]
 
 [project.scripts]
 angrist = "angrist.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/flxhrdyn/angrist"
+Repository = "https://github.com/flxhrdyn/angrist"
+Issues = "https://github.com/flxhrdyn/angrist/issues"
+Changelog = "https://github.com/flxhrdyn/angrist/releases"
 
 [build-system]
 requires = ["setuptools>=68"]
