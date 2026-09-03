@@ -30,9 +30,12 @@ class OpenAICompatibleClient:
         self._http = http_client or httpx.Client()
 
     def complete(self, prompt: str) -> str:
+        headers = {}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
         response = self._http.post(
             f"{self.base_url}/chat/completions",
-            headers={"Authorization": f"Bearer {self.api_key}"},
+            headers=headers,
             json={
                 "model": self.model,
                 "messages": [{"role": "user", "content": prompt}],
@@ -40,6 +43,7 @@ class OpenAICompatibleClient:
         )
         response.raise_for_status()
         return response.json()["choices"][0]["message"]["content"]
+
 
 
 def build_patch_prompt(
