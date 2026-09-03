@@ -65,48 +65,47 @@ class PaymentProcessor:
         return total_fee.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
     def settle_batch(
-        self,
-        transactions: list[Transaction],
-        exchange_rates: dict[str, Decimal],
-        base_currency: str = "USD",
-    ) -> SettlementSummary:
-        """Settle a batch of transactions into base currency.
+            self,
+            transactions: list[Transaction],
+            exchange_rates: dict[str, Decimal],
+            base_currency: str = "USD",
+        ) -> SettlementSummary:
+            """Settle a batch of transactions into base currency.
 
-        Converts each eligible transaction to base currency, deducts transaction fees,
-        and aggregates settlement accounting.
-        """
-        total_gross = Decimal("0.00")
-        total_fees = Decimal("0.00")
-        settled_count = 0
-        declined_count = 0
+            Converts each eligible transaction to base currency, deducts transaction fees,
+            and aggregates settlement accounting.
+            """
+            total_gross = Decimal("0.00")
+            total_fees = Decimal("0.00")
+            settled_count = 0
+            declined_count = 0
 
-        for tx in transactions:
-            if tx.status == TransactionStatus.DECLINED:
-                declined_count += 1
-                continue
+            for tx in transactions:
+                if tx.status == TransactionStatus.DECLINED:
+                    declined_count += 1
+                    continue
 
-            rate = exchange_rates.get(tx.currency, Decimal("1.00"))
+                rate = exchange_rates.get(tx.currency, Decimal("1.00"))
 
-            # INTENTIONAL BUG: Fee calculation applied after currency conversion using
-            # raw unrounded rates, causing floating Decimal precision drift and
-            # incorrect cross-border surcharge attribution.
-            # Fixed version: Calculate fee in transaction currency first,
-            # then convert both amount and fee to base currency cleanly.
-            fee = self.calculate_transaction_fee(tx.amount, is_cross_border=tx.is_cross_border)
-            converted_amount = (tx.amount * rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-            converted_fee = (fee * rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                # Calculate fee in transaction currency first, then convert both amount
+                # and fee to the base currency using the exchange rate, rounding to cents.
+                fee = self.calculate_transaction_fee(tx.amount, is_cross_border=tx.is_cross_border)
+                converted_amount = (tx.amount * rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                converted_fee = (fee * rate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
-            # Faulty logic: incorrectly adds fee to gross and fails to update tx.status
-            total_gross += converted_amount + converted_fee
-            total_fees += converted_fee
-            tx.fee = fee
-            settled_count += 1
+                # Gross should reflect only the converted transaction amount (fees are separate).
+                total_gross += converted_amount
+                total_fees += converted_fee
+                tx.fee = fee
+                tx.status = TransactionStatus.SETTLED
+                settled_count += 1
 
-        total_net = total_gross - total_fees
-        return SettlementSummary(
-            total_gross=total_gross,
-            total_net=total_net,
-            total_fees=total_fees,
-            settled_count=settled_count,
-            declined_count=declined_count,
-        )
+            total_net = total_gross - total_fees
+            return SettlementSummary(
+                total_gross=total_gross,
+                total_net=total_net,
+                total_fees=total_fees,
+                settled_count=settled_count,
+                declined_count=declined_count,
+            )
+
