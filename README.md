@@ -11,6 +11,8 @@ Angrist repairs bugs in Python functions using LLMs while strictly locking edits
 
 ![Angrist Demo](demo/demo.gif)
 
+*Simulated terminal session (rendered from a real `angrist fix` + `angrist benchmark` run's captured output), not a live screen recording. Benchmark numbers shown match the committed [`benchmark_results.json`](benchmark_results.json); results vary run to run since the demo uses a free small LLM (see [demo/README.md](demo/README.md)).*
+
 ---
 
 ## Overview

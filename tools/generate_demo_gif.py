@@ -139,15 +139,15 @@ def generate_demo():
         [("psf__requests-1142              prepare_url            ", TEXT_COLOR), ("PASS", GREEN_COLOR), ("     2.52s", DIM_COLOR)],
         [("marshmallow__marshmallow-1343   Schema._do_load        ", TEXT_COLOR), ("PASS", GREEN_COLOR), ("     2.50s", DIM_COLOR)],
         [("pallets__flask-4045             Blueprint.add_url_rule ", TEXT_COLOR), ("PASS", GREEN_COLOR), ("     2.52s", DIM_COLOR)],
-        [("django__django-11099            ASCIIUsernameValidator ", TEXT_COLOR), ("PASS", GREEN_COLOR), ("     2.15s", DIM_COLOR)],
-        [("pallets__flask-4992             Config.from_file       ", TEXT_COLOR), ("PASS", GREEN_COLOR), ("     3.16s", DIM_COLOR)],
-        [("pylint-dev__pylint-5859         EncodingChecker.open   ", TEXT_COLOR), ("PASS", GREEN_COLOR), ("     2.04s", DIM_COLOR)],
-        [("pytest-dev__pytest-11148        import_path            ", TEXT_COLOR), ("FAIL", RED_COLOR),   ("     4.72s", DIM_COLOR)],
-        [("django__django-11049            DurationField.get_msg  ", TEXT_COLOR), ("FAIL", RED_COLOR),   ("     2.94s", DIM_COLOR)],
-        [("sphinx-doc__sphinx-10325        inherited_members_opt  ", TEXT_COLOR), ("PASS", GREEN_COLOR), ("     3.29s", DIM_COLOR)],
-        [("psf__requests-1963            resolve_redirect_method", TEXT_COLOR), ("PASS", GREEN_COLOR), ("     2.58s", DIM_COLOR)],
+        [("django__django-11099            ASCIIUsernameValidator ", TEXT_COLOR), ("FAIL", RED_COLOR),   ("     0.66s", DIM_COLOR)],
+        [("pallets__flask-4992             Config.from_file       ", TEXT_COLOR), ("PASS", GREEN_COLOR), ("     1.57s", DIM_COLOR)],
+        [("pylint-dev__pylint-5859         EncodingChecker.open   ", TEXT_COLOR), ("PASS", GREEN_COLOR), ("     1.19s", DIM_COLOR)],
+        [("pytest-dev__pytest-11148        import_path            ", TEXT_COLOR), ("FAIL", RED_COLOR),   ("     1.11s", DIM_COLOR)],
+        [("django__django-11049            DurationField.get_msg  ", TEXT_COLOR), ("FAIL", RED_COLOR),   ("     0.71s", DIM_COLOR)],
+        [("sphinx-doc__sphinx-10325        inherited_members_opt  ", TEXT_COLOR), ("FAIL", RED_COLOR),   ("     1.13s", DIM_COLOR)],
+        [("psf__requests-1963            resolve_redirect_method", TEXT_COLOR), ("PASS", GREEN_COLOR), ("     1.11s", DIM_COLOR)],
         [("-" * 72, DIM_COLOR)],
-        [("Pass Rate: 8/10 (80.0%) | Zero Worktree Leaks | 100% AST Invariance", GREEN_COLOR)],
+        [("Pass Rate: 6/10 (60.0%) | Zero Worktree Leaks | 100% AST Invariance", GREEN_COLOR)],
     ]
 
     for step in range(2, len(bench_table) + 1):

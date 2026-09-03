@@ -58,7 +58,10 @@ pytest demo/test_payment_processor.py
 ## Generating Demo GIF
 
 ### 1. Primary Method: Python PIL Generator (Recommended)
-Reproducible, deterministic, zero external CLI dependencies (no ConPTY, ttyd, or Chrome required):
+Reproducible, deterministic, zero external CLI dependencies (no ConPTY, ttyd, or Chrome required).
+Note: this draws frames of terminal text rather than capturing a live session; the benchmark
+numbers it renders are hardcoded to match the committed `benchmark_results.json`, not
+recomputed live, so update both together if the suite's real results change.
 
 ```bash
 python tools/generate_demo_gif.py
