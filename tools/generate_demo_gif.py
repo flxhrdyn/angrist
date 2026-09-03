@@ -145,7 +145,7 @@ def generate_demo():
         [("pytest-dev__pytest-11148        import_path            ", TEXT_COLOR), ("FAIL", RED_COLOR),   ("     2.43s", DIM_COLOR)],
         [("django__django-11049            DurationField.get_msg  ", TEXT_COLOR), ("PASS", GREEN_COLOR), ("     2.58s", DIM_COLOR)],
         [("sphinx-doc__sphinx-10325        inherited_members_opt  ", TEXT_COLOR), ("PASS", GREEN_COLOR), ("     2.53s", DIM_COLOR)],
-        [("psf__requests-1963              resolve_redirect_method", TEXT_COLOR), ("PASS", GREEN_COLOR), ("  1.98s", DIM_COLOR)],
+        [("psf__requests-1963              resolve_redirect_method  ", TEXT_COLOR), ("PASS", GREEN_COLOR), ("   1.98s", DIM_COLOR)],
         [("-" * 72, DIM_COLOR)],
         [("Pass Rate: 9/10 (90.0%) | Zero Worktree Leaks | 100% AST Invariance", GREEN_COLOR)],
     ]
