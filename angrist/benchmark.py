@@ -165,8 +165,15 @@ def run_benchmark_suite(
             status = "passed" if res["status"] == "success" else "failed"
             reason = res.get("reason")
 
-            # Clean up the sandbox branch created by the unmerged test run
+            # Clean up the sandbox worktree and branch created by the unmerged test run
             if res.get("branch"):
+                subprocess.run(
+                    ["git", "worktree", "remove", "--force", res["branch"]],
+                    cwd=repo_path,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
                 subprocess.run(
                     ["git", "branch", "-D", res["branch"]],
                     cwd=repo_path,
@@ -174,6 +181,7 @@ def run_benchmark_suite(
                     text=True,
                     check=False,
                 )
+
 
             results.append(
                 BenchmarkCaseResult(
