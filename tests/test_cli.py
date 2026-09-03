@@ -507,6 +507,8 @@ def test_lint_findings_are_not_swallowed_by_a_warning_prefix():
 
 
 def test_cli_benchmark_help():
+    import re
+
     from typer.testing import CliRunner
 
     from angrist.cli import app
@@ -514,7 +516,8 @@ def test_cli_benchmark_help():
     runner = CliRunner()
     result = runner.invoke(app, ["benchmark", "--help"])
     assert result.exit_code == 0
-    assert "--dataset" in result.stdout
-    assert "--filter" in result.stdout
-    assert "--output-json" in result.stdout
+    clean_stdout = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", result.stdout)
+    assert "--dataset" in clean_stdout
+    assert "--filter" in clean_stdout
+    assert "--output-json" in clean_stdout
 

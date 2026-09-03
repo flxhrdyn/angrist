@@ -396,7 +396,16 @@ def run_fix(
                 ["git", "add", "."], cwd=wt_path, check=True, capture_output=True, text=True
             )
             subprocess.run(
-                ["git", "commit", "-m", f"fix: {instruction}"],
+                [
+                    "git",
+                    "-c",
+                    "user.name=angrist-bot",
+                    "-c",
+                    "user.email=bot@angrist.local",
+                    "commit",
+                    "-m",
+                    f"fix: {instruction}",
+                ],
                 cwd=wt_path,
                 check=True,
                 capture_output=True,
@@ -438,7 +447,18 @@ def run_fix(
                     }
 
                 merge_res = subprocess.run(
-                    ["git", "merge", "--no-ff", "-m", f"merge: {instruction}", branch_name],
+                    [
+                        "git",
+                        "-c",
+                        "user.name=angrist-bot",
+                        "-c",
+                        "user.email=bot@angrist.local",
+                        "merge",
+                        "--no-ff",
+                        "-m",
+                        f"merge: {instruction}",
+                        branch_name,
+                    ],
                     cwd=repo_path,
                     capture_output=True,
                     text=True,

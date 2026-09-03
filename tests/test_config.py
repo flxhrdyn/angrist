@@ -50,6 +50,8 @@ def test_load_config_reads_dotenv(tmp_path, monkeypatch):
 
 
 def test_cli_fix_help_shows_config_options():
+    import re
+
     from typer.testing import CliRunner
 
     from angrist.cli import app
@@ -58,7 +60,8 @@ def test_cli_fix_help_shows_config_options():
     result = runner.invoke(app, ["fix", "--help"])
     assert result.exit_code == 0
 
-    assert "--model" in result.stdout
-    assert "--api-key" in result.stdout
-    assert "--base-url" in result.stdout
+    clean_stdout = re.sub(r"\x1b\[[0-9;]*[a-zA-Z]", "", result.stdout)
+    assert "--model" in clean_stdout
+    assert "--api-key" in clean_stdout
+    assert "--base-url" in clean_stdout
 

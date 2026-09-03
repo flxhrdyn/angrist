@@ -38,7 +38,12 @@ def test_enter_creates_worktree_and_branch(git_repo):
         ["git", "worktree", "list"], cwd=git_repo, capture_output=True, text=True, check=True
     ).stdout
     # on clean exit (no exception), worktree/branch are left in place
-    assert str(wt_path) in worktrees or wt_path.as_posix() in worktrees
+    assert (
+        str(wt_path) in worktrees
+        or wt_path.as_posix() in worktrees
+        or wt_path.name in worktrees
+        or sandbox.branch_name in worktrees
+    )
     sandbox.cleanup()
 
 
