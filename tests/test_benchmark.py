@@ -116,6 +116,30 @@ def test_render_benchmark_table_and_panel():
     assert isinstance(pnl, Panel)
 
 
+def test_official_swebench_lite_manifest_integrity():
+    manifest_path = Path("benchmarks/swe_bench/official_manifest.json")
+    assert manifest_path.exists()
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert data["total_instances"] == 300
+    assert len(data["instances"]) == 300
+    assert data["single_function_instances"] >= 290
+
+
+def test_benchmark_suite_handles_official_manifest_nonexistent_local_files():
+    from angrist.benchmark import run_benchmark_suite
+
+    manifest = Path("benchmarks/swe_bench/official_manifest.json")
+    summary = run_benchmark_suite(
+        manifest_path=manifest,
+        filter_pattern="astropy__astropy-12907",
+    )
+    assert summary.total == 1
+    assert summary.failed == 1
+    assert summary.instances[0].status == "error"
+    assert "not found in" in (summary.instances[0].reason or "")
+
+
+
 
 
 def test_run_benchmark_suite_leaves_no_worktree_or_branch_after_success():

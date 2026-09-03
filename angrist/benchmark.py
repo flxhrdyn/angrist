@@ -168,25 +168,48 @@ def run_benchmark_suite(
 
     for item in instances:
         instance_id = item["instance_id"]
-        instance_dir_rel = item["directory"]
-        manifest_dir = manifest_path.parent
-        instance_dir = manifest_dir / instance_dir_rel
+        target = item.get("target") or "target"
 
-        file_rel = str(instance_dir / item["file"]).replace("\\", "/")
-        instruction_file = instance_dir / item["instruction_file"]
-        instruction = instruction_file.read_text().strip()
-        target = item["target"]
+        # Check if local bundled instance or official SWE-bench instance
+        if "directory" in item:
+            instance_dir_rel = item["directory"]
+            manifest_dir = manifest_path.parent
+            instance_dir = manifest_dir / instance_dir_rel
 
-        # Adapt test command to run relative to workspace root
-        raw_test_cmd = item["test_cmd"]
-        if raw_test_cmd.startswith("pytest "):
-            test_target = raw_test_cmd[len("pytest "):].strip()
-            effective_test_cmd = f"pytest {instance_dir}/{test_target}".replace("\\", "/")
+            file_rel = str(instance_dir / item["file"]).replace("\\", "/")
+            instruction_file = instance_dir / item["instruction_file"]
+            instruction = instruction_file.read_text().strip()
+            raw_test_cmd = item.get("test_cmd", "pytest")
+            if raw_test_cmd.startswith("pytest "):
+                test_target = raw_test_cmd[len("pytest ") :].strip()
+                effective_test_cmd = f"pytest {instance_dir}/{test_target}".replace("\\", "/")
+            else:
+                effective_test_cmd = raw_test_cmd
         else:
-            effective_test_cmd = raw_test_cmd
-
+            file_rel = item.get("file", "")
+            instruction = item.get("problem_statement", "")
+            fail_tests = item.get("fail_to_pass", [])
+            test_target = " ".join(fail_tests) if fail_tests else ""
+            effective_test_cmd = f"pytest {test_target}".strip()
 
         case_start = time.time()
+        if not (Path(repo_path) / file_rel).exists():
+            duration = time.time() - case_start
+            results.append(
+                BenchmarkCaseResult(
+                    instance_id=instance_id,
+                    repo=item.get("repo", ""),
+                    target=target,
+                    status="error",
+                    duration_seconds=duration,
+                    reason=(
+                        f"File '{file_rel}' not found in '{repo_path}'. "
+                        f"Checkout {item.get('repo', 'repo')} at commit {item.get('base_commit', 'HEAD')}."
+                    ),
+                )
+            )
+            continue
+
         try:
             res = run_fix(
                 file_path=file_rel,
