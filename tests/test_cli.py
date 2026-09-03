@@ -573,10 +573,12 @@ def test_split_command_keeps_quoted_arguments_intact():
 
 
 def test_split_command_handles_quoted_windows_path_with_spaces():
+    """POSIX double-quote rules only treat \\, $, `, and a trailing newline as
+    escapes, so a backslash before an ordinary letter is passed through as-is
+    on every platform -- this case never depended on the os.name branch."""
     args = split_command(r'pytest "C:\Program Files\proj\test_x.py"')
 
-    expected = r"C:\Program Files\proj\test_x.py" if os.name == "nt" else "C:Program Filesprojtest_x.py"
-    assert args == ["pytest", expected]
+    assert args == ["pytest", r"C:\Program Files\proj\test_x.py"]
 
 
 def test_run_fix_reports_llm_failure_without_traceback(git_repo_with_bug):
