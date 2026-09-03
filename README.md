@@ -12,13 +12,8 @@
 
 A fast, lightweight, and mathematically constrained AI coding micro-agent for targeted, single-function Python bug repairs. Built on Tree-sitter AST scope-locking and Git-worktree isolation to completely eliminate hallucinations, drift, and repository corruption.
 
-```text
- ┌─ Angrist Code Repair ────────────────────────────────────────────────────────┐
- │ Target: PreparedRequest.prepare_url (requests/models.py)                     │
- │ Status: [ PASS ]  |  Attempts: 1/3  |  Delta Gate: Clean (0 Regressions)     │
- │ Branch: angrist-sandbox-8a3b1c  -> Ready for review                          │
- └──────────────────────────────────────────────────────────────────────────────┘
-```
+![Angrist Demo](demo/demo.gif)
+
 
 ---
 
