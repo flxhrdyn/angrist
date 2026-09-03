@@ -46,13 +46,16 @@ def build_patch_prompt(
     target_source: str, instruction: str, violation_detail: str | None = None
 ) -> str:
     parts = [
-        "You are given the exact source of a single Python function or "
-        "class. Return ONLY the complete replacement source for this "
-        "node (no explanations, no markdown fences).",
+        (
+            "You are given the exact source of a single Python function or "
+            "class. Return ONLY the complete replacement source for this "
+            "node (no explanations, no markdown fences)."
+        ),
         f"Instruction: {instruction}",
         "Current source:",
         target_source,
     ]
+
     if violation_detail is not None:
         parts.insert(
             1,

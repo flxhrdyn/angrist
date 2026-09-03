@@ -1,4 +1,3 @@
-import os
 
 
 def top_level_func(x):

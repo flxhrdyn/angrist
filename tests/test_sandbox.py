@@ -1,5 +1,4 @@
 import subprocess
-from pathlib import Path
 
 import pytest
 
@@ -33,6 +32,7 @@ def test_enter_creates_worktree_and_branch(git_repo):
     branches = subprocess.run(
         ["git", "branch", "--list"], cwd=git_repo, capture_output=True, text=True, check=True
     ).stdout
+    assert "angrist-sandbox-" in branches
     worktrees = subprocess.run(
         ["git", "worktree", "list"], cwd=git_repo, capture_output=True, text=True, check=True
     ).stdout
@@ -40,12 +40,12 @@ def test_enter_creates_worktree_and_branch(git_repo):
     assert str(wt_path) in worktrees or wt_path.as_posix() in worktrees
 
 
+
 def test_exception_triggers_cleanup(git_repo):
     sandbox = WorktreeSandbox(base_branch="master", repo_path=git_repo)
-    with pytest.raises(RuntimeError):
-        with sandbox as wt_path:
-            assert wt_path.exists()
-            raise RuntimeError("boom")
+    with pytest.raises(RuntimeError), sandbox as wt_path:
+        assert wt_path.exists()
+        raise RuntimeError("boom")
 
     worktrees = subprocess.run(
         ["git", "worktree", "list"], cwd=git_repo, capture_output=True, text=True, check=True
@@ -66,10 +66,9 @@ def test_main_workspace_untouched(git_repo):
     ).stdout.strip()
 
     sandbox = WorktreeSandbox(base_branch="master", repo_path=git_repo)
-    with pytest.raises(RuntimeError):
-        with sandbox as wt_path:
-            (wt_path / "a.txt").write_text("changed\n")
-            raise RuntimeError("boom")
+    with pytest.raises(RuntimeError), sandbox as wt_path:
+        (wt_path / "a.txt").write_text("changed\n")
+        raise RuntimeError("boom")
 
     assert (git_repo / "a.txt").read_text() == "hello\n"
     head_after = subprocess.run(

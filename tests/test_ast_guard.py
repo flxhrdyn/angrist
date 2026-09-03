@@ -3,7 +3,6 @@ from pathlib import Path
 import pytest
 
 from angrist.ast_guard import (
-    AmbiguousTargetError,
     ASTScopeViolationError,
     TargetNotFoundError,
     extract_node_source,
