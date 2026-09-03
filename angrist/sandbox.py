@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import os
+import shutil
+import stat
 import subprocess
 import tempfile
 import uuid
@@ -17,6 +20,16 @@ def current_branch(repo_path: str | Path = ".") -> str:
         text=True,
     )
     return result.stdout.strip()
+
+
+def _handle_remove_readonly(func, path, exc_info):
+    """Clear readonly bit on Windows files and retry deletion."""
+    try:
+        os.chmod(path, stat.S_IWRITE)
+        func(path)
+    except OSError:
+        pass
+
 
 
 class WorktreeSandbox:
@@ -67,6 +80,13 @@ class WorktreeSandbox:
                 capture_output=True,
                 text=True,
             )
+            # N4 FIX: Ensure physical directory is completely removed on Windows
+            if self.worktree_path.exists():
+                shutil.rmtree(
+                    self.worktree_path,
+                    onerror=_handle_remove_readonly,
+                    ignore_errors=True,
+                )
         if self.branch_name is not None:
             subprocess.run(
                 ["git", "branch", "-D", self.branch_name],

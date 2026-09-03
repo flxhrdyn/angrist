@@ -247,3 +247,58 @@ def test_run_fix_rejects_file_outside_repo(git_repo_with_bug, tmp_path):
     assert "not within repository" in result["reason"]
 
 
+def test_run_fix_auto_merge_fails_gracefully_when_working_tree_dirty(git_repo_with_bug):
+    """N1 verification: auto_merge does not overwrite or fail if user workspace is dirty."""
+    # Dirty the main workspace
+    (git_repo_with_bug / "dirty.txt").write_text("uncommitted changes")
+
+    good_fix = "def add(a, b):\n    return a + b\n"
+    client = StubLLMClient([good_fix])
+
+    result = run_fix(
+        file_path=str(git_repo_with_bug / "mod.py"),
+        target="add",
+        instruction="fix the bug",
+        llm_client=client,
+        repo_path=str(git_repo_with_bug),
+        base_branch="master",
+        test_cmd="pytest",
+        lint_cmd="python -c pass",
+        auto_merge=True,
+    )
+    assert result["status"] == "failed"
+    assert "uncommitted changes" in result["reason"]
+    # Branch is preserved for the user
+    assert result["branch"] is not None
+
+
+def test_run_fix_delta_gate_detects_new_failure_among_preexisting(git_repo_with_bug):
+    """H3 verification: delta gate detects newly introduced test failure even if baseline had a failing test."""
+    # Add an unrelated pre-existing failing test AND a passing test
+    (git_repo_with_bug / "test_other.py").write_text(
+        "def test_already_failing():\n    assert False\n\n"
+        "def test_currently_passing():\n    from mod import add\n    assert add(1, 1) != 'broken'\n"
+    )
+    subprocess.run(["git", "add", "."], cwd=git_repo_with_bug, check=True)
+    subprocess.run(["git", "commit", "-m", "add baseline tests"], cwd=git_repo_with_bug, check=True)
+
+    # Patch that fixes `add` in a way that breaks `test_currently_passing`
+    bad_fix = "def add(a, b):\n    return 'broken'\n"
+    client = StubLLMClient([bad_fix])
+
+    result = run_fix(
+        file_path=str(git_repo_with_bug / "mod.py"),
+        target="add",
+        instruction="fix the bug",
+        llm_client=client,
+        repo_path=str(git_repo_with_bug),
+        base_branch="master",
+        test_cmd="pytest test_other.py",
+        lint_cmd="python -c pass",
+        max_retries=1,
+    )
+    assert result["status"] == "failed"
+    assert "passed at baseline now fail" in result["reason"]
+
+
+

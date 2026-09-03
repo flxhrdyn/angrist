@@ -31,16 +31,96 @@ console = Console()
 
 
 def _run(cmd: str, cwd) -> subprocess.CompletedProcess:
-    """Run a configured lint/test command.
-
-    Normalizes backslashes to forward slashes so POSIX quote stripping works
-    without corrupting Windows path delimiters.
-    """
-    normalized = cmd.replace("\\", "/")
-    args = shlex.split(normalized)
+    """Run a configured lint/test command using POSIX shell argument splitting."""
+    args = shlex.split(cmd, posix=True)
     return subprocess.run(
         args, cwd=cwd, capture_output=True, text=True, check=False
     )
+
+
+def _check_lint_regression(
+    baseline: subprocess.CompletedProcess, candidate: subprocess.CompletedProcess
+) -> str | None:
+    """True delta gate for linting.
+
+    Passes if no new findings appear, even if baseline had existing lint warnings.
+    """
+    if candidate.returncode == 0:
+        return None
+    if baseline.returncode == 0 and candidate.returncode != 0:
+        return (
+            "lint regressed (clean before the patch):\n"
+            f"{candidate.stdout}\n{candidate.stderr}"
+        )
+
+    base_lines = [
+        line.strip()
+        for line in baseline.stdout.splitlines()
+        if line.strip() and not line.startswith("Found")
+    ]
+    cand_lines = [
+        line.strip()
+        for line in candidate.stdout.splitlines()
+        if line.strip() and not line.startswith("Found")
+    ]
+    if len(cand_lines) > len(base_lines):
+        diff = len(cand_lines) - len(base_lines)
+        return (
+            f"lint regressed: {diff} new finding(s) introduced after patch:\n"
+            f"{candidate.stdout}\n{candidate.stderr}"
+        )
+    return None
+
+
+def _parse_failed_tests(output: str) -> set[str]:
+    failed = set()
+    for line in output.splitlines():
+        line = line.strip()
+        if line.startswith("FAILED "):
+            parts = line.split()
+            if len(parts) > 1:
+                failed.add(parts[1])
+    return failed
+
+
+def _check_test_regression(
+    baseline: subprocess.CompletedProcess, candidate: subprocess.CompletedProcess
+) -> str | None:
+    """True delta gate for tests.
+
+    Passes if no previously-passing tests fail, even if baseline had existing failures.
+    """
+    if candidate.returncode == 0:
+        return None
+
+    base_failed = _parse_failed_tests(baseline.stdout)
+    cand_failed = _parse_failed_tests(candidate.stdout)
+
+    if base_failed or cand_failed:
+        new_failures = cand_failed - base_failed
+        if new_failures:
+            return (
+                f"tests regressed: {len(new_failures)} test(s) that passed at baseline now fail: "
+                f"{', '.join(sorted(new_failures))}"
+            )
+        if cand_failed and cand_failed == base_failed:
+            return (
+                "tests still failing after the patch (they were already failing at baseline, "
+                f"so this fix did not land): {', '.join(sorted(cand_failed))}"
+            )
+        return None
+
+    if baseline.returncode == 0 and candidate.returncode != 0:
+        return (
+            "tests regressed (passing before the patch):\n"
+            f"{candidate.stdout}\n{candidate.stderr}"
+        )
+    if baseline.returncode != 0 and candidate.returncode != 0:
+        return (
+            "tests still failing after the patch:\n"
+            f"{candidate.stdout}\n{candidate.stderr}"
+        )
+    return None
 
 
 def run_fix(
@@ -59,7 +139,7 @@ def run_fix(
     if base_branch is None:
         base_branch = current_branch(repo_path)
 
-    # H4 FIX: Gracefully handle paths outside the repository
+    # H4 FIX: Gracefully handle paths outside repository
     try:
         rel_file = Path(file_path).resolve().relative_to(repo_path.resolve())
     except ValueError:
@@ -80,7 +160,6 @@ def run_fix(
             "diff": None,
         }
 
-    # Step 1: Pre-flight target validation before creating sandbox
     try:
         extract_node_source(target_file, target)
     except (TargetNotFoundError, AmbiguousTargetError) as e:
@@ -117,7 +196,7 @@ def run_fix(
                     failure_detail = str(e)
                     sandboxed_file.write_text(original_source)
 
-            # H1 FIX: Clean up sandbox on failure before returning
+            # H1 & N3 FIX: Clean up sandbox and return branch=None on failure
             if not patched:
                 sandbox.cleanup()
                 return {
@@ -130,55 +209,34 @@ def run_fix(
                     "diff": None,
                 }
 
-            lint_result = _run(lint_cmd, wt_path)
-            if (
-                lint_result.returncode != 0
-                and baseline_lint.returncode == 0
-            ):
-                branch = sandbox.branch_name
+            # H3 FIX: True delta gate for linting
+            lint_error = _check_lint_regression(baseline_lint, _run(lint_cmd, wt_path))
+            if lint_error:
                 sandbox.cleanup()
                 return {
                     "status": "failed",
-                    "branch": branch,
-                    "reason": (
-                        "lint regressed (clean before the patch): "
-                        f"{lint_result.stdout}\n{lint_result.stderr}"
-                    ),
+                    "branch": None,
+                    "reason": lint_error,
                     "diff": None,
                 }
 
-            test_result = _run(test_cmd, wt_path)
-            if (
-                test_result.returncode != 0
-                and baseline_test.returncode == 0
-            ):
-                branch = sandbox.branch_name
+            # H3 FIX: True delta gate for tests
+            test_error = _check_test_regression(baseline_test, _run(test_cmd, wt_path))
+            if test_error:
                 sandbox.cleanup()
                 return {
                     "status": "failed",
-                    "branch": branch,
-                    "reason": (
-                        "tests regressed (passing before the patch): "
-                        f"{test_result.stdout}\n{test_result.stderr}"
-                    ),
-                    "diff": None,
-                }
-            if test_result.returncode != 0 and baseline_test.returncode != 0:
-                branch = sandbox.branch_name
-                sandbox.cleanup()
-                return {
-                    "status": "failed",
-                    "branch": branch,
-                    "reason": (
-                        "tests still failing after the patch (they were "
-                        "already failing at baseline, so this fix did not "
-                        f"land): {test_result.stdout}\n{test_result.stderr}"
-                    ),
+                    "branch": None,
+                    "reason": test_error,
                     "diff": None,
                 }
 
             diff = subprocess.run(
-                ["git", "diff", base_branch], cwd=wt_path, capture_output=True, text=True, check=False
+                ["git", "diff", base_branch],
+                cwd=wt_path,
+                capture_output=True,
+                text=True,
+                check=False,
             ).stdout
 
             subprocess.run(
@@ -194,22 +252,53 @@ def run_fix(
 
             branch_name = sandbox.branch_name
 
-            # M4 FIX: Ensure we checkout base_branch before merging
+            # N1 FIX: Safe auto-merge without touching or forcibly moving user's branch
             if auto_merge:
-                subprocess.run(
-                    ["git", "checkout", base_branch],
+                # Check for dirty working tree
+                status_res = subprocess.run(
+                    ["git", "status", "--porcelain"],
                     cwd=repo_path,
-                    check=True,
                     capture_output=True,
                     text=True,
+                    check=False,
                 )
-                subprocess.run(
-                    ["git", "merge", branch_name],
+                if status_res.stdout.strip():
+                    return {
+                        "status": "failed",
+                        "branch": branch_name,
+                        "reason": (
+                            "Cannot auto-merge: main working tree has uncommitted changes. "
+                            f"The patch is safely committed on branch '{branch_name}'."
+                        ),
+                        "diff": diff,
+                    }
+
+                active_branch = current_branch(repo_path)
+                if active_branch != base_branch:
+                    return {
+                        "status": "failed",
+                        "branch": branch_name,
+                        "reason": (
+                            f"Cannot auto-merge: active branch in repository is '{active_branch}', "
+                            f"not base branch '{base_branch}'. The patch is safely committed on branch '{branch_name}'."
+                        ),
+                        "diff": diff,
+                    }
+
+                merge_res = subprocess.run(
+                    ["git", "merge", "--no-ff", "-m", f"merge: {instruction}", branch_name],
                     cwd=repo_path,
-                    check=True,
                     capture_output=True,
                     text=True,
+                    check=False,
                 )
+                if merge_res.returncode != 0:
+                    return {
+                        "status": "failed",
+                        "branch": branch_name,
+                        "reason": f"Merge failed: {merge_res.stderr or merge_res.stdout}",
+                        "diff": diff,
+                    }
                 sandbox.cleanup()
 
             return {
