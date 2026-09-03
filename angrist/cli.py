@@ -18,6 +18,7 @@ from angrist.ast_guard import (
     extract_node_source,
     validate_scope_source,
 )
+from angrist.config import load_config
 from angrist.patcher import (
     LLMClient,
     OpenAICompatibleClient,
@@ -469,6 +470,9 @@ def fix(
     target: str = typer.Option(..., help="function_name or ClassName.method_name"),
     instruction: str = typer.Option(None, help="Free-text fix instruction"),
     instruction_file: str = typer.Option(None, help="Path to long-form instruction text"),
+    model: str = typer.Option(None, help="LLM model name (overrides env and .env)"),
+    api_key: str = typer.Option(None, help="LLM API key (overrides env and .env)"),
+    base_url: str = typer.Option(None, help="LLM API base URL (overrides env and .env)"),
     test_cmd: str = typer.Option("pytest"),
     lint_cmd: str = typer.Option("ruff check"),
     auto_merge: bool = typer.Option(False),
@@ -480,11 +484,14 @@ def fix(
     if instruction is None:
         instruction = Path(instruction_file).read_text()
 
+    cfg = load_config(model=model, base_url=base_url, api_key=api_key)
+
     llm_client = OpenAICompatibleClient(
-        base_url=os.environ.get("ANGRIST_LLM_BASE_URL", "https://api.groq.com/openai/v1"),
-        api_key=os.environ.get("ANGRIST_LLM_API_KEY", ""),
-        model=os.environ.get("ANGRIST_LLM_MODEL", "gpt-oss"),
+        base_url=cfg.base_url,
+        api_key=cfg.api_key,
+        model=cfg.model,
     )
+
 
     result = run_fix(
         file_path=file,
