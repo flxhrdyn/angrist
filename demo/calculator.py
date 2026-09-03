@@ -2,11 +2,9 @@
 
 
 def calculate_discount(price: float, discount_rate: float) -> float:
-    """Calculate the final price after discount.
+    """Calculate the final price after discount."""
+    return price - (price * discount_rate)
 
-    Bug: Accidental addition instead of subtraction!
-    """
-    return price + (price * discount_rate)
 
 
 class BankAccount:
