@@ -1,0 +1,39 @@
+name: Bug Report
+description: File a bug report or AST scope escape issue
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for taking the time to report an issue!
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what happened.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Minimal code example or command line invocation.
+      placeholder: |
+        1. File: ...
+        2. Target: ...
+        3. Command: angrist fix ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What you expected to happen.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Angrist & Python Version
+      placeholder: "Angrist 0.1.0, Python 3.12.2, Windows/Linux/macOS"
+    validations:
+      required: true
