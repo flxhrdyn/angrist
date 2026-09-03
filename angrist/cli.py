@@ -73,7 +73,6 @@ _LINT_NOISE_PREFIXES = (
     "Found ",
     "[*]",
     "Success:",
-    "warning:",
 )
 
 # Ruff reports unreadable files and unparseable syntax as ordinary findings
@@ -176,6 +175,16 @@ def _check_lint_regression(
             "lint output is in an unrecognized format, so a regression cannot "
             "be ruled out. Use a machine-readable format such as "
             "'ruff check --output-format=json' or 'file:line:col: CODE message'.\n"
+            f"{candidate.stdout}\n{candidate.stderr}"
+        )
+
+    if not cand_findings:
+        # Non-zero exit with nothing to attribute it to: the linter reported
+        # its findings somewhere this gate cannot see (stderr, a report file),
+        # so passing here would mean passing every run.
+        return (
+            f"lint command exited {candidate.returncode} but reported no "
+            "findings on stdout, so a regression cannot be ruled out.\n"
             f"{candidate.stdout}\n{candidate.stderr}"
         )
 

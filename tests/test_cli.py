@@ -1,5 +1,6 @@
 import json
 import subprocess
+from collections import Counter
 
 import pytest
 
@@ -483,3 +484,23 @@ def test_lint_input_error_passes_a_healthy_run():
 
     assert lint_input_error(_lint_result(1, _ruff_json(("m.py", "F401")))) is None
     assert lint_input_error(_lint_result(0, "[]")) is None
+
+
+def test_lint_gate_rejects_nonzero_exit_with_no_parsed_findings():
+    """A linter reporting only on stderr must not silently pass the gate."""
+    from angrist.cli import _check_lint_regression
+
+    base = _lint_result(1, "", "a.py:1: F821 undefined name")
+    cand = _lint_result(1, "", "a.py:1: F821 undefined name\na.py:2: F811 redefinition")
+
+    res = _check_lint_regression(base, cand)
+    assert res is not None
+    assert "reported no findings on stdout" in res
+
+
+def test_lint_findings_are_not_swallowed_by_a_warning_prefix():
+    """Only genuinely content-free lines count as noise."""
+    from angrist.cli import _parse_lint_findings
+
+    assert _parse_lint_findings("warning: a.py:1:1: F401 unused") is None
+    assert _parse_lint_findings("All checks passed!") == Counter()
