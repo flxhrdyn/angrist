@@ -22,6 +22,7 @@ from angrist.ast_guard import (
 from angrist.config import load_config
 from angrist.patcher import (
     LLMClient,
+    LLMError,
     OpenAICompatibleClient,
     SanitizationError,
     apply_patch,
@@ -55,8 +56,21 @@ def main(
     """Angrist: Git-worktree isolated, AST-scope-locked micro-agent."""
 
 
+def _split_command(cmd: str) -> list[str]:
+    """Split a configured lint/test command into argv.
+
+    POSIX splitting treats a backslash as an escape, which silently eats the
+    separators in a Windows path ('pytest tests\\unit' becomes 'testsunit').
+    Escaping backslashes first keeps them literal on Windows while leaving
+    quoting -- which the non-POSIX mode would leak into the tokens -- intact.
+    """
+    if os.name == "nt":
+        cmd = cmd.replace("\\", "\\\\")
+    return shlex.split(cmd, posix=True)
+
+
 def _run(cmd: str, cwd: Path | str) -> subprocess.CompletedProcess:
-    """Run a configured lint/test command using POSIX shell argument splitting.
+    """Run a configured lint/test command in the sandbox worktree.
 
     Prepends cwd to PYTHONPATH (H2) so local modules are importable in isolated worktrees.
 
@@ -66,7 +80,7 @@ def _run(cmd: str, cwd: Path | str) -> subprocess.CompletedProcess:
     second) is then silently ignored, so the post-patch run measures the
     unpatched code.
     """
-    args = shlex.split(cmd, posix=True)
+    args = _split_command(cmd)
     env = os.environ.copy()
     cwd_str = str(Path(cwd).resolve())
     existing = env.get("PYTHONPATH", "")
@@ -80,7 +94,7 @@ def _run(cmd: str, cwd: Path | str) -> subprocess.CompletedProcess:
 
 def _normalize_lint_cmd(cmd: str) -> str:
     """If using ruff check without explicit output format, request JSON (N6)."""
-    args = shlex.split(cmd, posix=True)
+    args = _split_command(cmd)
     if (
         args
         and Path(args[0]).stem == "ruff"
@@ -363,7 +377,18 @@ def run_fix(
             for _ in range(1, max_retries + 1):
                 target_source = extract_node_source(sandboxed_file, target)
                 prompt = build_patch_prompt(target_source, instruction, failure_detail)
-                raw = llm_client.complete(prompt)
+                # Not retried: a bad URL, a rejected key or a down endpoint
+                # fails identically on every attempt.
+                try:
+                    raw = llm_client.complete(prompt)
+                except LLMError as e:
+                    sandbox.cleanup()
+                    return {
+                        "status": "failed",
+                        "branch": None,
+                        "reason": str(e),
+                        "diff": None,
+                    }
 
                 try:
                     clean = sanitize_output(raw, indent_cols)

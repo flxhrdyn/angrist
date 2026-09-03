@@ -1,11 +1,15 @@
+import importlib.metadata
 import json
+import os
 import subprocess
 from collections import Counter
 
 import pytest
 
 from angrist.cli import _run as cli_run
+from angrist.cli import _split_command as split_command
 from angrist.cli import run_fix
+from angrist.patcher import LLMError
 
 
 class StubLLMClient:
@@ -539,7 +543,9 @@ def test_package_has_version():
     import angrist
 
     assert hasattr(angrist, "__version__")
-    assert angrist.__version__ == "0.1.0"
+    # Pinning a literal here would need editing on every release; what has to
+    # hold is that __version__ and the version pyproject.toml ships agree.
+    assert angrist.__version__ == importlib.metadata.version("angrist")
 
 
 
@@ -550,3 +556,54 @@ def test_run_disables_bytecode_cache(tmp_path):
     result = cli_run("python -c \"import sys; print(sys.dont_write_bytecode)\"", tmp_path)
 
     assert result.stdout.strip() == "True"
+
+
+def test_split_command_preserves_windows_backslash_paths():
+    """On Windows a backslash is a path separator, not a shell escape."""
+    args = split_command(r"pytest C:\proj\tests\test_x.py")
+
+    assert args == ["pytest", r"C:\proj\tests\test_x.py"] or os.name != "nt"
+
+
+def test_split_command_keeps_quoted_arguments_intact():
+    """Quoting must still group words and must not leak quote characters."""
+    args = split_command('pytest tests/unit -k "not slow"')
+
+    assert args == ["pytest", "tests/unit", "-k", "not slow"]
+
+
+def test_split_command_handles_quoted_windows_path_with_spaces():
+    args = split_command(r'pytest "C:\Program Files\proj\test_x.py"')
+
+    expected = r"C:\Program Files\proj\test_x.py" if os.name == "nt" else "C:Program Filesprojtest_x.py"
+    assert args == ["pytest", expected]
+
+
+def test_run_fix_reports_llm_failure_without_traceback(git_repo_with_bug):
+    """An unreachable or rejecting LLM endpoint is the most common first-run
+    failure, so it must come back as a normal failed result, not an exception."""
+    class DeadClient:
+        def complete(self, prompt):
+            raise LLMError("cannot reach LLM endpoint at http://127.0.0.1:9/v1")
+
+    result = run_fix(
+        file_path=str(git_repo_with_bug / "mod.py"),
+        target="add",
+        instruction="fix",
+        llm_client=DeadClient(),
+        repo_path=str(git_repo_with_bug),
+        lint_cmd="python -c pass",
+    )
+
+    assert result["status"] == "failed"
+    assert result["branch"] is None
+    assert "cannot reach LLM endpoint" in result["reason"]
+
+    worktrees = subprocess.run(
+        ["git", "worktree", "list"],
+        cwd=git_repo_with_bug,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert len(worktrees.strip().splitlines()) == 1
