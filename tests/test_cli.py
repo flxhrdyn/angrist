@@ -1,3 +1,4 @@
+import json
 import subprocess
 
 import pytest
@@ -408,3 +409,77 @@ def test_run_fix_test_gate_reports_exact_remaining_failures_on_partial_fix(git_r
 
 
 
+
+
+def _lint_result(returncode, stdout="", stderr=""):
+    result = subprocess.CompletedProcess(args=["ruff"], returncode=returncode)
+    result.stdout = stdout
+    result.stderr = stderr
+    return result
+
+
+def _ruff_json(*findings):
+    payload = [
+        {"filename": filename, "code": code, "name": "x", "message": "m"}
+        for filename, code in findings
+    ]
+    return json.dumps(payload)
+
+
+def test_lint_gate_catches_new_finding_of_an_already_present_rule():
+    """A second F841 in a file that already had one is still a regression."""
+    from angrist.cli import _check_lint_regression
+
+    base = _lint_result(1, _ruff_json(("m.py", "F841")))
+    cand = _lint_result(1, _ruff_json(("m.py", "F841"), ("m.py", "F841")))
+
+    res = _check_lint_regression(base, cand)
+    assert res is not None
+    assert "F841" in res
+
+
+def test_lint_gate_ignores_line_shifts_of_unchanged_findings():
+    """Identical findings must compare equal regardless of position."""
+    from angrist.cli import _check_lint_regression
+
+    base = _lint_result(1, _ruff_json(("m.py", "F841")))
+    cand = _lint_result(1, _ruff_json(("m.py", "F841")))
+
+    assert _check_lint_regression(base, cand) is None
+
+
+def test_lint_gate_reports_unrecognized_output_instead_of_passing():
+    """Unparseable lint output must not be mistaken for a clean report."""
+    from angrist.cli import _check_lint_regression
+
+    base = _lint_result(1, "F841 Local variable is unused\n  |\n5 |     x = 1\n")
+    cand = _lint_result(1, "F841 Local variable is unused\n  |\n6 |     x = 1\n")
+
+    res = _check_lint_regression(base, cand)
+    assert res is not None
+    assert "unrecognized format" in res
+
+
+def test_lint_input_error_detects_in_band_io_failure():
+    """Ruff reports an unreadable path as an E902 finding, not on stderr."""
+    from angrist.cli import lint_input_error
+
+    payload = json.dumps(
+        [{"filename": "gone.py", "code": "E902", "name": "io-error", "message": "missing"}]
+    )
+    assert "E902" in lint_input_error(_lint_result(1, payload))
+
+
+def test_lint_input_error_detects_empty_report_beside_stderr_error():
+    """A rule filter can suppress E902, leaving an empty report plus a warning."""
+    from angrist.cli import lint_input_error
+
+    result = _lint_result(0, "[]", "warning: Failed to lint gone.py: (os error 3)")
+    assert lint_input_error(result) is not None
+
+
+def test_lint_input_error_passes_a_healthy_run():
+    from angrist.cli import lint_input_error
+
+    assert lint_input_error(_lint_result(1, _ruff_json(("m.py", "F401")))) is None
+    assert lint_input_error(_lint_result(0, "[]")) is None

@@ -5,6 +5,7 @@ import os
 import re
 import shlex
 import subprocess
+from collections import Counter
 from pathlib import Path
 
 import typer
@@ -65,52 +66,103 @@ _CONCISE_LINT_RE = re.compile(
     r"^([^:\n]+):(?:\d+):(?:\d+:)?\s*([A-Za-z][A-Za-z0-9_-]+)\s*(.*)$"
 )
 
+# Lines a linter prints that carry no finding, so their absence from the
+# parsed result means "clean", not "unrecognized format".
+_LINT_NOISE_PREFIXES = (
+    "All checks passed",
+    "Found ",
+    "[*]",
+    "Success:",
+    "warning:",
+)
 
-def _parse_lint_findings(output: str) -> set[tuple[str, str]]:
-    """Parse linter output into line-number-independent (filename, rule_code) signatures (N6).
+# Ruff reports unreadable files and unparseable syntax as ordinary findings
+# rather than on stderr, so they have to be recognized in-band.
+_LINT_INPUT_ERROR_CODES = {"E902", "E999"}
+_LINT_INPUT_ERROR_NAMES = {"io-error", "syntax-error", "invalid-syntax"}
 
-    Supports JSON format (from ruff --output-format=json) and concise text format (flake8, mypy, etc.).
-    Ignores non-matching human-readable context/syntax blocks.
-    """
-    # Try parsing as JSON first
+
+def _parse_lint_json(output: str) -> list[dict] | None:
+    """The findings list from a JSON lint report, or None if not JSON."""
     try:
         data = json.loads(output)
-        if isinstance(data, list):
-            findings = set()
-            for item in data:
-                if isinstance(item, dict):
-                    fn = Path(item.get("filename", "")).name
-                    code = item.get("code") or item.get("message", "")
-                    findings.add((fn, str(code)))
-            return findings
     except (json.JSONDecodeError, TypeError, ValueError):
-        pass
+        return None
+    if not isinstance(data, list):
+        return None
+    return [item for item in data if isinstance(item, dict)]
 
 
-    # Fallback to concise text parsing
-    findings = set()
+def _parse_lint_findings(output: str) -> Counter[tuple[str, str]] | None:
+    """Count findings per (filename, rule_code), ignoring line and column.
+
+    A Counter rather than a set: two findings of the same rule in one file
+    are two findings, and collapsing them hides a newly introduced one (N10).
+    Position is deliberately excluded from the key -- patching the target
+    shifts every line below it, which is not a regression (N6).
+
+    Returns None when the output carries content in no recognized format, so
+    the caller can say "cannot tell" instead of "clean" (N12).
+    """
+    items = _parse_lint_json(output)
+    if items is not None:
+        return Counter(
+            (Path(item.get("filename", "")).name, str(item.get("code") or item.get("name", "")))
+            for item in items
+        )
+
+    findings: Counter[tuple[str, str]] = Counter()
+    unrecognized = False
     for line in output.splitlines():
         line = line.strip()
-        if not line or line.startswith("Found "):
+        if not line or line.startswith(_LINT_NOISE_PREFIXES):
             continue
         match = _CONCISE_LINT_RE.match(line)
         if match:
             file_part, code_part, _ = match.groups()
-            findings.add((Path(file_part).name, code_part.strip()))
+            findings[(Path(file_part).name, code_part.strip())] += 1
+        else:
+            unrecognized = True
+
+    if not findings and unrecognized:
+        return None
     return findings
+
+
+def lint_input_error(result: subprocess.CompletedProcess) -> str | None:
+    """Why the lint command itself is unusable, or None if it ran properly.
+
+    Separate from regression checking: a linter that cannot read its input
+    still exits 1 and prints a well-formed report, so without this the run
+    proceeds comparing garbage against garbage (N11).
+    """
+    if result.returncode not in (0, 1):
+        return f"exit code {result.returncode}"
+    # An empty report next to an error on stderr means the linter never
+    # examined the code: ruff exits 0 with a bare "[]" when the path is
+    # unreadable and a rule filter suppresses the in-band E902.
+    if "error" in result.stderr.lower() and not _parse_lint_findings(result.stdout):
+        return result.stderr.strip()
+
+    for item in _parse_lint_json(result.stdout) or []:
+        code = str(item.get("code") or "")
+        name = str(item.get("name") or "")
+        if code in _LINT_INPUT_ERROR_CODES or name in _LINT_INPUT_ERROR_NAMES:
+            return f"{code or name}: {item.get('message', '')} ({item.get('filename', '')})"
+    return None
 
 
 def _check_lint_regression(
     baseline: subprocess.CompletedProcess, candidate: subprocess.CompletedProcess
 ) -> str | None:
-    """Set-based delta gate for linting (N6).
+    """Delta gate for linting: fail only if the patch adds findings.
 
-    Passes if no new rule findings appear, comparing rule code signatures
-    without being affected by line-number shifts.
+    Compares per-rule counts so a repo's pre-existing lint noise neither
+    fails every run nor masks a new finding of a rule already present.
     """
     if candidate.returncode == 0:
         return None
-    if baseline.returncode == 0 and candidate.returncode != 0:
+    if baseline.returncode == 0:
         return (
             "lint regressed (clean before the patch):\n"
             f"{candidate.stdout}\n{candidate.stderr}"
@@ -119,21 +171,22 @@ def _check_lint_regression(
     base_findings = _parse_lint_findings(baseline.stdout)
     cand_findings = _parse_lint_findings(candidate.stdout)
 
-    if base_findings or cand_findings:
-        new_findings = cand_findings - base_findings
-        if new_findings:
-            formatted = "\n".join(
-                f"  - {f}: {rule}" if f else f"  - {rule}"
-                for f, rule in sorted(new_findings)
-            )
-            return f"lint regressed: new finding(s) introduced after patch:\n{formatted}"
-        return None
-
-    if baseline.returncode != 0 and candidate.returncode != 0:
+    if base_findings is None or cand_findings is None:
         return (
-            f"lint command failed (exit code {candidate.returncode}):\n"
+            "lint output is in an unrecognized format, so a regression cannot "
+            "be ruled out. Use a machine-readable format such as "
+            "'ruff check --output-format=json' or 'file:line:col: CODE message'.\n"
             f"{candidate.stdout}\n{candidate.stderr}"
         )
+
+    # Counter subtraction keeps multiplicity and drops non-positive entries.
+    new_findings = cand_findings - base_findings
+    if new_findings:
+        formatted = "\n".join(
+            f"  - {f}: {rule} (x{count})" if f else f"  - {rule} (x{count})"
+            for (f, rule), count in sorted(new_findings.items())
+        )
+        return f"lint regressed: new finding(s) introduced after patch:\n{formatted}"
     return None
 
 
@@ -236,18 +289,16 @@ def run_fix(
             baseline_lint = _run(effective_lint_cmd, wt_path)
             baseline_test = _run(test_cmd, wt_path)
 
-            # N8 FIX: Verify baseline lint command is valid
-            if baseline_lint.returncode not in (0, 1) or (
-                "error" in baseline_lint.stderr.lower() and not baseline_lint.stdout.strip()
-            ):
+            baseline_lint_error = lint_input_error(baseline_lint)
+            if baseline_lint_error is not None:
                 sandbox.cleanup()
                 return {
                     "status": "failed",
                     "branch": None,
                     "reason": (
-                        f"Baseline lint command failed with exit code {baseline_lint.returncode}. "
-                        "Ensure the lint command and dependencies are valid:\n"
-                        f"{baseline_lint.stderr or baseline_lint.stdout}"
+                        "Baseline lint command failed with "
+                        f"{baseline_lint_error}. Ensure the lint command, its "
+                        "dependencies, and the target path are valid."
                     ),
                     "diff": None,
                 }
