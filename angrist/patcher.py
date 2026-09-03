@@ -61,6 +61,7 @@ class OpenAICompatibleClient:
                 json={
                     "model": self.model,
                     "messages": [{"role": "user", "content": prompt}],
+                    "temperature": 0,
                 },
             )
             response.raise_for_status()
