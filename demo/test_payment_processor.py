@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
+
 import pytest
 
 from demo.payment_processor import (
@@ -21,7 +22,8 @@ def processor():
 
 def test_signature_verification(processor):
     payload = b'{"event":"charge.succeeded","amount":5000}'
-    import hmac, hashlib
+    import hashlib
+    import hmac
     expected_sig = hmac.new(b"live_sk_9a8b7c6d5e4f3a2b1c", payload, hashlib.sha256).hexdigest()
     assert processor.verify_webhook_signature(payload, expected_sig) is True
     assert processor.verify_webhook_signature(payload, "invalid_signature") is False

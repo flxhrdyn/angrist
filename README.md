@@ -99,13 +99,14 @@ Fix a targeted top-level function without affecting anything else in the file:
 
 ```bash
 angrist fix \
-  --file core/calculator.py \
-  --target calculate_discount \
-  --instruction "Handle zero division error and return 0.0 when discount is 100%"
+  --file demo/payment_processor.py \
+  --target PaymentProcessor.settle_batch \
+  --instruction "Fix fee deduction precedence and update transaction status" \
+  --test-cmd "pytest demo/test_payment_processor.py"
 ```
 
-### 2. Fix a Class Method
-Target a specific method inside a class (including nested classes):
+### 2. Fix a Module Function
+Target a top-level function directly:
 
 ```bash
 angrist fix \
@@ -113,6 +114,7 @@ angrist fix \
   --target PreparedRequest.prepare_url \
   --instruction "Ensure query parameters with empty strings preserve key names"
 ```
+
 
 ### 3. Read Long Instructions from File
 For complex bugs or issue descriptions:
@@ -230,32 +232,40 @@ Angrist uses an atomic, unidirectional verification pipeline:
 
 ## Benchmarks
 
-### SWE-bench Lite (Single-Function Curated Subset)
+### SWE-bench Lite (Curated 10-Instance Diverse Suite)
 
-Evaluated live against `openai/gpt-oss-120b` via Groq on single-function bug instances from real-world open-source repositories (`psf/requests`, `marshmallow-code/marshmallow`, `pallets/flask`):
+Evaluated live against `openai/gpt-oss-120b` via Groq across 10 real-world bug instances from 7 major open-source repositories:
 
 | Instance ID | Repository | Target Function | Status | AST Scope | Regressions | Duration |
 |---|---|---|:---:|:---:|:---:|:---:|
-| `psf__requests-1142` | `psf/requests` | `PreparedRequest.prepare_url` | **PASS** | 100% Locked | 0 | 2.42s |
-| `marshmallow__marshmallow-1343` | `marshmallow` | `Schema._do_load` | **PASS** | 100% Locked | 0 | 2.63s |
-| `pallets__flask-4045` | `pallets/flask` | `Blueprint.add_url_rule` | **PASS** | 100% Locked | 0 | 2.49s |
+| `psf__requests-1142` | `psf/requests` | `PreparedRequest.prepare_url` | **PASS** | 100% Locked | 0 | 2.52s |
+| `marshmallow__marshmallow-1343` | `marshmallow` | `Schema._do_load` | **PASS** | 100% Locked | 0 | 2.50s |
+| `pallets__flask-4045` | `pallets/flask` | `Blueprint.add_url_rule` | **PASS** | 100% Locked | 0 | 2.52s |
+| `django__django-11099` | `django/django` | `ASCIIUsernameValidator.__init__` | **PASS** | 100% Locked | 0 | 2.15s |
+| `pallets__flask-4992` | `pallets/flask` | `Config.from_file` | **PASS** | 100% Locked | 0 | 3.16s |
+| `pylint-dev__pylint-5859` | `pylint-dev/pylint` | `EncodingChecker.open` | **PASS** | 100% Locked | 0 | 2.04s |
+| `pytest-dev__pytest-11148` | `pytest-dev/pytest` | `import_path` | **FAIL** | 100% Locked | 0 | 4.72s |
+| `django__django-11049` | `django/django` | `DurationField.get_error_message` | **FAIL** | 100% Locked | 0 | 2.94s |
+| `sphinx-doc__sphinx-10325` | `sphinx-doc/sphinx` | `inherited_members_option` | **PASS** | 100% Locked | 0 | 3.29s |
+| `psf__requests-1963` | `psf/requests` | `SessionRedirect.resolve_redirect_method` | **PASS** | 100% Locked | 0 | 2.58s |
 
 ### Benchmark Insights:
-- **100% Pass Rate (3/3):** All three instances resolved and passed all unit test assertions on the first attempt (Total duration: 7.89s).
-- **100% Target Containment:** Across all instances, zero lines outside the target function or method were modified.
+- **80.0% Pass Rate (8/10):** 8 of 10 real-world open-source bugs resolved on the first attempt (Total duration: 29.56s).
+- **Conservative Gate Safety:** The 2 incomplete candidate patches were rejected cleanly by the delta test gate, preventing any repository contamination.
+- **100% Target Containment:** Across all 10 instances, zero lines outside the target function or method were modified.
 - **Zero Worktree Leaks:** 100% of temporary worktrees and branches were systematically cleaned up.
-- **Delta Gate Precision:** Preexisting tests in the repository continued to pass without collateral test degradation.
 - **Official SWE-bench Lite Integration:** Angrist includes the complete 300-instance manifest (`benchmarks/swe_bench/official_manifest.json`) directly scraped from Princeton NLP Hugging Face, verifying that 297 of 300 instances (99%) in SWE-bench Lite are single-function targets suited for Angrist.
 
 To reproduce the benchmark:
 
 ```bash
-# Run the curated benchmark suite
+# Run the curated 10-instance benchmark suite
 angrist benchmark
 
 # Run against the official 300-instance manifest
 angrist benchmark --dataset benchmarks/swe_bench/official_manifest.json --filter django
 ```
+
 
 
 ---

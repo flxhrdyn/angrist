@@ -11,17 +11,17 @@ Set Height 580
 Set Padding 24
 Set Theme "Catppuccin Mocha"
 Set WindowBar Colorful
-Set TypingSpeed 40ms
+Set TypingSpeed 35ms
 
 Sleep 500ms
-Type "angrist fix --file demo/calculator.py --target calculate_discount --instruction 'Fix zero division bug'"
-Sleep 500ms
-Enter
-
-Sleep 4s
-
-Type "angrist benchmark --filter requests"
+Type "angrist fix --file demo/payment_processor.py --target PaymentProcessor.settle_batch --instruction 'Fix fee deduction precedence and update transaction status' --test-cmd 'pytest demo/test_payment_processor.py'"
 Sleep 500ms
 Enter
 
 Sleep 5s
+
+Type "angrist benchmark"
+Sleep 500ms
+Enter
+
+Sleep 6s

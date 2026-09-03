@@ -1,105 +1,66 @@
 # Angrist Demo Scenario & VHS Recording
 
-Petunjuk menjalankan demo skenario dan merekam terminal animation (GIF) menggunakan **VHS**.
+Guide for running the real-world payment processor demo scenario and recording terminal animation (GIF) using Charm VHS.
 
 ---
 
-## 🎯 Skenario Demo
+## Demo Scenario: Production Payment Settlement Engine
 
-File target: [`demo/calculator.py`](calculator.py)
-Terdapat fungsi dengan bug:
-1. `calculate_discount(price, discount_rate)`: Menggunakan `+` (pertambahan) bukan `-` (pengurangan).
-2. Kelas `BankAccount`:
-   - Atribut `BANK_CODE` dan method `deposit` yang valid.
-   - Method `withdraw` dengan kondisi terbalik (`if amount < self.balance`).
+Target File: [`demo/payment_processor.py`](payment_processor.py)
+Test File: [`demo/test_payment_processor.py`](test_payment_processor.py)
 
-Saat `angrist` dijalankan:
-- AST Guard mengisolasi hanya node fungsi/method target.
-- Worktree Sandbox menguji perubahan di direktori temp tanpa mengotori repo utama.
-- Sibling method (`deposit`), class attribute (`BANK_CODE`), dan kode lain di luar target tetap terkunci secara deterministik (byte-identical).
+The module implements a production-grade multi-currency payment settlement engine with:
+- `TransactionStatus` enumeration and `Transaction` dataclass.
+- Constant-time HMAC-SHA256 signature verification (`verify_webhook_signature`).
+- Tier-based processing fee calculation with cross-border surcharges (`calculate_transaction_fee`).
+- Multi-currency batch settlement accounting (`settle_batch`).
 
----
+### The Bug in `PaymentProcessor.settle_batch`:
+In `settle_batch`, the settlement logic incorrectly adds transaction fees directly to `total_gross` instead of keeping gross sales separate, and fails to update the transaction status to `TransactionStatus.SETTLED` for processed items.
 
-## 🚀 Cara 1: Rekam Otomatis Menggunakan VHS
-
-Jika Anda memiliki `vhs` terpasang di sistem, cukup jalankan perintah berikut di root repository:
+Running the test suite before repair demonstrates the failure:
 
 ```bash
-vhs demo.tape
+pytest demo/test_payment_processor.py
+# FAILED: AssertionError: assert Decimal('326.67') == Decimal('320.00')
 ```
 
-VHS akan otomatis:
-1. Menjalankan mock OpenAI server lokal di background (`http://127.0.0.1:8089`).
-2. Menampilkan kegagalan unit test sebelum perbaikan (`pytest demo/test_calculator.py -k test_calculate_discount`).
-3. Menjalankan `angrist` untuk melakukan micro-fix secara otomatis ke fungsi `calculate_discount`.
-4. Menjalankan kembali unit test untuk membuktikan test sekarang lulus (**PASSED**).
-5. Menampilkan `git diff` yang membuktikan **hanya** node target yang disentuh.
-6. Menyimpan hasil rekaman ke file [`demo.gif`](../demo.gif).
+When Angrist executes:
+1. **Tree-sitter AST Guard:** Locks onto `PaymentProcessor.settle_batch`. The signature verification logic, fee tiers, dataclasses, and sibling methods remain mathematically locked down to the exact byte.
+2. **Worktree Sandbox:** Executes in an isolated Git worktree outside your working directory.
+3. **Delta Test Gate:** Verifies that the patch resolves `test_settle_batch_accounting` while preserving passing status on all other unit tests.
+4. **Clean Merge:** Merges the surgical patch back into your working branch.
 
 ---
 
-## 🛠 Cara 2: Menjalankan Demo Secara Manual
+## Running the Demo Manually
 
-### Menggunakan Mock Server Lokal (Tanpa Butuh API Key)
-
-1. Jalankan mock server di terminal terpisah:
-   ```bash
-   python demo/mock_server.py 8089
-   ```
-
-2. Cek kegagalan test:
-   ```bash
-   pytest demo/test_calculator.py -k test_calculate_discount
-   ```
-
-3. Jalankan `angrist` micro-fix:
-   - PowerShell:
-     ```powershell
-     $env:ANGRIST_LLM_BASE_URL="http://127.0.0.1:8089"
-     angrist --file demo/calculator.py --target calculate_discount --instruction "fix discount subtraction" --test-cmd "pytest demo/test_calculator.py -k test_calculate_discount" --lint-cmd "python -c pass" --auto-merge
-     ```
-   - Bash/Linux/macOS:
-     ```bash
-     export ANGRIST_LLM_BASE_URL="http://127.0.0.1:8089"
-     angrist --file demo/calculator.py --target calculate_discount --instruction "fix discount subtraction" --test-cmd "pytest demo/test_calculator.py -k test_calculate_discount" --lint-cmd "python -c pass" --auto-merge
-     ```
-
-4. Verifikasi test telah berhasil:
-   ```bash
-   pytest demo/test_calculator.py -k test_calculate_discount
-   ```
-
----
-
-### Menggunakan Model Riil (Groq API)
-
-Jika ingin mendemokan dengan model LLM sungguhan (Groq free tier):
-
-1. Set environment variable:
-   ```bash
-   export ANGRIST_LLM_API_KEY="gsk_your_api_key_here"
-   export ANGRIST_LLM_MODEL="llama-3.3-70b-versatile" # atau model OpenAI-compatible lainnya
-   ```
-
-2. Jalankan `angrist`:
-   ```bash
-   angrist --file demo/calculator.py \
-           --target calculate_discount \
-           --instruction "fix discount calculation: subtract discount amount from price" \
-           --test-cmd "pytest demo/test_calculator.py -k test_calculate_discount" \
-           --auto-merge
-   ```
-
----
-
-## 🔄 Mereset Demo ke Keadaan Semula
-
-Untuk mengembalikan file `demo/calculator.py` kembali ke kondisi bug semula:
+### Using Real LLM or Local Model
 
 ```bash
-git checkout demo/calculator.py
+# Verify the baseline test failure
+pytest demo/test_payment_processor.py
+
+# Run Angrist surgical repair
+angrist fix \
+  --file demo/payment_processor.py \
+  --target PaymentProcessor.settle_batch \
+  --instruction "In settle_batch, total_gross must only be the sum of converted_amount (do not add converted_fee to total_gross), and update tx.status to TransactionStatus.SETTLED for processed transactions" \
+  --test-cmd "pytest demo/test_payment_processor.py" \
+  --auto-merge
+
+# Verify that all tests now pass
+pytest demo/test_payment_processor.py
 ```
-atau
+
+---
+
+## Recording Demo GIF with Charm VHS
+
+If you have `vhs` installed on your machine, run:
+
 ```bash
-git restore demo/calculator.py
+vhs demo/demo.tape
 ```
+
+VHS will render the interactive terminal session directly into `demo/demo.gif`.
