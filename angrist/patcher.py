@@ -61,3 +61,112 @@ def build_patch_prompt(
             "anything else.",
         )
     return "\n\n".join(parts)
+
+
+import textwrap
+from pathlib import Path
+
+from angrist.ast_guard import _iter_function_defs, _make_parser, parse_target
+
+
+class SanitizationError(Exception):
+    pass
+
+
+def _strip_fences(raw: str) -> str:
+    lines = raw.splitlines()
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    if lines and lines[0].lstrip().startswith("```"):
+        lines = lines[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+    return "\n".join(lines)
+
+
+def sanitize_output(raw: str, target_indent_cols: int) -> str:
+    """Turn raw model output into exactly one correctly-indented node.
+
+    Mechanical, not prompt-dependent: open-weight models wrap output in
+    fences and guess indentation no matter what the prompt says, so the
+    guarantee lives here.
+    """
+    text = _strip_fences(raw)
+    text = textwrap.dedent(text).strip("\n")
+    if not text:
+        raise SanitizationError("Model returned empty output.")
+
+    parser = _make_parser()
+    root = parser.parse(text.encode()).root_node
+
+    if root.has_error:
+        raise SanitizationError(
+            "Output did not parse as valid Python. Return only the "
+            "replacement function or class body, with no prose."
+        )
+
+    definitions = [
+        c for c in root.children
+        if c.type in ("function_definition", "class_definition")
+    ]
+    if len(definitions) != 1 or len(root.children) != 1:
+        raise SanitizationError(
+            f"Expected exactly one function or class definition and nothing "
+            f"else, got {len(root.children)} top-level node(s). Return only "
+            f"the replacement node."
+        )
+
+    if target_indent_cols:
+        text = textwrap.indent(text, " " * target_indent_cols)
+    return text + "\n"
+
+
+def _resolve_target_node(source: bytes, qualifier: str):
+    from angrist.ast_guard import AmbiguousTargetError, TargetNotFoundError
+
+    class_name, func_name = parse_target(qualifier)
+    tree = _make_parser().parse(source)
+
+    matches = []
+    for node, _ in _iter_function_defs(tree.root_node, class_name):
+        name_node = node.child_by_field_name("name")
+        if name_node is not None and name_node.text.decode() == func_name:
+            matches.append(node)
+
+    if not matches:
+        raise TargetNotFoundError(f"No target matching '{qualifier}' found")
+    if len(matches) > 1:
+        raise AmbiguousTargetError(
+            f"Qualifier '{qualifier}' matches {len(matches)} nodes"
+        )
+    return matches[0]
+
+
+def target_indent(file_path: str | Path, qualifier: str) -> int:
+    source = Path(file_path).read_bytes()
+    node = _resolve_target_node(source, qualifier)
+    return node.start_point[1]
+
+
+def apply_patch(file_path: str | Path, qualifier: str, new_node_source: str) -> None:
+    path = Path(file_path)
+    source = path.read_bytes()
+    node = _resolve_target_node(source, qualifier)
+
+    new_bytes = new_node_source.encode()
+    if not new_bytes.endswith(b"\n"):
+        new_bytes += b"\n"
+    # node.start_byte sits at the first character of the definition, past
+    # its leading indentation; sanitize_output already re-indented the
+    # replacement, so trim its leading whitespace on the first line to
+    # avoid doubling it.
+    line_start = source.rfind(b"\n", 0, node.start_byte) + 1
+    leading = source[line_start:node.start_byte]
+    if leading.strip() == b"" and new_bytes.startswith(leading):
+        new_bytes = new_bytes[len(leading):]
+
+    updated = source[: node.start_byte] + new_bytes + source[node.end_byte :]
+    path.write_bytes(updated)
+
