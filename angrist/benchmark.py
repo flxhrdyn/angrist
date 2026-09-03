@@ -96,6 +96,44 @@ def render_summary_panel(summary: BenchmarkSummary) -> Panel:
     )
 
 
+def _worktree_path_for_branch(branch: str, repo_path: str | Path) -> str | None:
+    """The worktree path registered for `branch`, via `git worktree list --porcelain`."""
+    listing = subprocess.run(
+        ["git", "worktree", "list", "--porcelain"],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    current_path = None
+    for line in listing.stdout.splitlines():
+        if line.startswith("worktree "):
+            current_path = line[len("worktree "):]
+        elif line == f"branch refs/heads/{branch}":
+            return current_path
+    return None
+
+
+def _cleanup_sandbox_branch(branch: str, repo_path: str | Path) -> None:
+    """Remove the worktree and branch a completed run_fix() left behind."""
+    worktree_path = _worktree_path_for_branch(branch, repo_path)
+    if worktree_path is not None:
+        subprocess.run(
+            ["git", "worktree", "remove", "--force", worktree_path],
+            cwd=repo_path,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    subprocess.run(
+        ["git", "branch", "-D", branch],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
 def run_benchmark_suite(
     manifest_path: str | Path,
     filter_pattern: str | None = None,
@@ -165,22 +203,11 @@ def run_benchmark_suite(
             status = "passed" if res["status"] == "success" else "failed"
             reason = res.get("reason")
 
-            # Clean up the sandbox worktree and branch created by the unmerged test run
+            # Clean up the sandbox worktree and branch created by the unmerged
+            # test run. res["branch"] is a branch name, not a worktree path --
+            # `git worktree remove` needs the path, so look it up first.
             if res.get("branch"):
-                subprocess.run(
-                    ["git", "worktree", "remove", "--force", res["branch"]],
-                    cwd=repo_path,
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
-                subprocess.run(
-                    ["git", "branch", "-D", res["branch"]],
-                    cwd=repo_path,
-                    capture_output=True,
-                    text=True,
-                    check=False,
-                )
+                _cleanup_sandbox_branch(res["branch"], repo_path)
 
 
             results.append(
