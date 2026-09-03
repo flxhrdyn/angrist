@@ -1,6 +1,6 @@
 [project]
 name = "angrist"
-version = "0.1.2"
+version = "0.1.3"
 description = "Git-worktree isolated, AST-scope-locked micro-agent for precise single-function code fixes"
 readme = "README_PYPI.md"
 license = "MIT"
@@ -30,7 +30,9 @@ classifiers = [
     "Topic :: Software Development :: Testing",
 ]
 dependencies = [
-    "typer>=0.13",  # 0.12 breaks against click 8.2+ at CLI construction
+    # 0.13-0.15 crash on --help against click 8.5+: Parameter.make_metavar()
+    # gained a required ctx argument typer doesn't pass until 0.16.
+    "typer>=0.16",
     "rich>=13.0",
     # 0.25 is the first pair whose language ABI (15) match: older
     # tree-sitter rejects tree-sitter-python 0.25 at Language() construction.
