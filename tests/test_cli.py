@@ -186,3 +186,21 @@ def test_run_fix_auto_merge_merges_into_base(git_repo_with_bug):
         ["git", "worktree", "list"], cwd=git_repo_with_bug, capture_output=True, text=True, check=True
     ).stdout
     assert result["branch"] not in worktrees
+
+
+def test_run_fix_fails_on_missing_target_without_creating_sandbox(git_repo_with_bug):
+    client = StubLLMClient([])
+    result = run_fix(
+        file_path=str(git_repo_with_bug / "mod.py"),
+        target="does_not_exist",
+        instruction="fix it",
+        llm_client=client,
+        repo_path=str(git_repo_with_bug),
+    )
+    assert result["status"] == "failed"
+    assert "No target matching" in result["reason"]
+    worktrees = subprocess.run(
+        ["git", "worktree", "list"], cwd=git_repo_with_bug, capture_output=True, text=True, check=True
+    ).stdout
+    assert len(worktrees.strip().splitlines()) == 1
+

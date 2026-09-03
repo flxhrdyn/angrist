@@ -61,8 +61,23 @@ def run_fix(
     if base_branch is None:
         base_branch = current_branch(repo_path)
     rel_file = Path(file_path).resolve().relative_to(repo_path.resolve())
+    target_file = repo_path / rel_file
+
+    if not target_file.exists():
+        return {
+            "status": "failed",
+            "branch": None,
+            "reason": f"No such file: {file_path}",
+            "diff": None,
+        }
+
+    try:
+        extract_node_source(target_file, target)
+    except (TargetNotFoundError, AmbiguousTargetError) as e:
+        return {"status": "failed", "branch": None, "reason": str(e), "diff": None}
 
     sandbox = WorktreeSandbox(base_branch=base_branch, repo_path=repo_path)
+
     try:
         with sandbox as wt_path:
             sandboxed_file = wt_path / rel_file
