@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import shlex
@@ -47,23 +48,55 @@ def _run(cmd: str, cwd: Path | str) -> subprocess.CompletedProcess:
     )
 
 
-# Matches linter lines: "file:line:col: [RULE] msg" or "file:line: RULE msg"
-_LINT_RE = re.compile(r"^(.*?):(?:\d+):(?:\d+:)?\s*(.*)$")
+def _normalize_lint_cmd(cmd: str) -> str:
+    """If using ruff check without explicit output format, request JSON (N6)."""
+    args = shlex.split(cmd, posix=True)
+    if (
+        args
+        and args[0] == "ruff"
+        and "check" in args
+        and not any(a.startswith("--output-format") for a in args)
+    ):
+        return f"{cmd} --output-format=json"
+    return cmd
+
+
+_CONCISE_LINT_RE = re.compile(
+    r"^([^:\n]+):(?:\d+):(?:\d+:)?\s*([A-Za-z][A-Za-z0-9_-]+)\s*(.*)$"
+)
 
 
 def _parse_lint_findings(output: str) -> set[tuple[str, str]]:
-    """Parse linter output into line-number-independent findings (N6)."""
+    """Parse linter output into line-number-independent (filename, rule_code) signatures (N6).
+
+    Supports JSON format (from ruff --output-format=json) and concise text format (flake8, mypy, etc.).
+    Ignores non-matching human-readable context/syntax blocks.
+    """
+    # Try parsing as JSON first
+    try:
+        data = json.loads(output)
+        if isinstance(data, list):
+            findings = set()
+            for item in data:
+                if isinstance(item, dict):
+                    fn = Path(item.get("filename", "")).name
+                    code = item.get("code") or item.get("message", "")
+                    findings.add((fn, str(code)))
+            return findings
+    except (json.JSONDecodeError, TypeError, ValueError):
+        pass
+
+
+    # Fallback to concise text parsing
     findings = set()
     for line in output.splitlines():
         line = line.strip()
         if not line or line.startswith("Found "):
             continue
-        match = _LINT_RE.match(line)
+        match = _CONCISE_LINT_RE.match(line)
         if match:
-            file_part, msg_part = match.groups()
-            findings.add((Path(file_part).name, msg_part.strip()))
-        else:
-            findings.add(("", line))
+            file_part, code_part, _ = match.groups()
+            findings.add((Path(file_part).name, code_part.strip()))
     return findings
 
 
@@ -72,8 +105,8 @@ def _check_lint_regression(
 ) -> str | None:
     """Set-based delta gate for linting (N6).
 
-    Passes if no new findings appear, comparing rule/message signatures
-    without being tricked by line-number shifts.
+    Passes if no new rule findings appear, comparing rule code signatures
+    without being affected by line-number shifts.
     """
     if candidate.returncode == 0:
         return None
@@ -86,10 +119,21 @@ def _check_lint_regression(
     base_findings = _parse_lint_findings(baseline.stdout)
     cand_findings = _parse_lint_findings(candidate.stdout)
 
-    new_findings = cand_findings - base_findings
-    if new_findings:
-        formatted = "\n".join(f"  - {f}: {msg}" if f else f"  - {msg}" for f, msg in sorted(new_findings))
-        return f"lint regressed: new finding(s) introduced after patch:\n{formatted}"
+    if base_findings or cand_findings:
+        new_findings = cand_findings - base_findings
+        if new_findings:
+            formatted = "\n".join(
+                f"  - {f}: {rule}" if f else f"  - {rule}"
+                for f, rule in sorted(new_findings)
+            )
+            return f"lint regressed: new finding(s) introduced after patch:\n{formatted}"
+        return None
+
+    if baseline.returncode != 0 and candidate.returncode != 0:
+        return (
+            f"lint command failed (exit code {candidate.returncode}):\n"
+            f"{candidate.stdout}\n{candidate.stderr}"
+        )
     return None
 
 
@@ -100,7 +144,6 @@ def _parse_failed_tests(output: str) -> set[str]:
         line = line.strip()
         if line.startswith(("FAILED ", "ERROR ")):
             parts = line.split()
-
             if len(parts) > 1:
                 failed.add(parts[1])
     return failed
@@ -109,7 +152,7 @@ def _parse_failed_tests(output: str) -> set[str]:
 def _check_test_regression(
     baseline: subprocess.CompletedProcess, candidate: subprocess.CompletedProcess
 ) -> str | None:
-    """Conservative delta gate for tests (N5).
+    """Conservative delta gate for tests (N5, N9).
 
     Never silently passes if candidate exit code is non-zero.
     """
@@ -126,10 +169,11 @@ def _check_test_regression(
                 f"tests regressed: {len(new_failures)} test/error(s) appeared after patch: "
                 f"{', '.join(sorted(new_failures))}"
             )
-        if cand_failed and cand_failed == base_failed:
+        # N9 FIX: Accurate message when tests are still failing (e.g. partial fixes)
+        if cand_failed:
             return (
-                "tests still failing after the patch (they were already failing at baseline, "
-                f"so this fix did not land): {', '.join(sorted(cand_failed))}"
+                f"tests still failing after the patch ({len(cand_failed)} test(s) failed): "
+                f"{', '.join(sorted(cand_failed))}"
             )
 
     # Candidate failed non-zero and could not be justified by baseline failures
@@ -188,8 +232,25 @@ def run_fix(
             sandboxed_file = wt_path / rel_file
             original_source = sandboxed_file.read_text()
 
-            baseline_lint = _run(lint_cmd, wt_path)
+            effective_lint_cmd = _normalize_lint_cmd(lint_cmd)
+            baseline_lint = _run(effective_lint_cmd, wt_path)
             baseline_test = _run(test_cmd, wt_path)
+
+            # N8 FIX: Verify baseline lint command is valid
+            if baseline_lint.returncode not in (0, 1) or (
+                "error" in baseline_lint.stderr.lower() and not baseline_lint.stdout.strip()
+            ):
+                sandbox.cleanup()
+                return {
+                    "status": "failed",
+                    "branch": None,
+                    "reason": (
+                        f"Baseline lint command failed with exit code {baseline_lint.returncode}. "
+                        "Ensure the lint command and dependencies are valid:\n"
+                        f"{baseline_lint.stderr or baseline_lint.stdout}"
+                    ),
+                    "diff": None,
+                }
 
             # H2 FIX: Detect when baseline test runner fails due to environment/invocation error
             # pytest exit codes: 0 = pass, 1 = tests failed, 2 = interrupted, 3 = internal error, 4 = usage error, 5 = no tests collected
@@ -241,7 +302,7 @@ def run_fix(
                 }
 
             # N6 FIX: Set-based delta gate for linting
-            lint_error = _check_lint_regression(baseline_lint, _run(lint_cmd, wt_path))
+            lint_error = _check_lint_regression(baseline_lint, _run(effective_lint_cmd, wt_path))
             if lint_error:
                 sandbox.cleanup()
                 return {
@@ -251,7 +312,7 @@ def run_fix(
                     "diff": None,
                 }
 
-            # N5 FIX: Conservative delta gate for tests
+            # N5 & N9 FIX: Conservative delta gate for tests
             test_error = _check_test_regression(baseline_test, _run(test_cmd, wt_path))
             if test_error:
                 sandbox.cleanup()

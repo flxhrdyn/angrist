@@ -364,5 +364,47 @@ def test_run_fix_aborts_early_on_invalid_baseline_command(git_repo_with_bug):
     assert "Baseline test command failed with exit code 4" in result["reason"]
 
 
+def test_run_fix_aborts_early_on_invalid_baseline_lint_command(git_repo_with_bug):
+    """N8 verification: invalid baseline lint command aborts before invoking LLM."""
+    client = StubLLMClient([])
+    result = run_fix(
+        file_path=str(git_repo_with_bug / "mod.py"),
+        target="add",
+        instruction="fix the bug",
+        llm_client=client,
+        repo_path=str(git_repo_with_bug),
+        base_branch="master",
+        test_cmd="pytest",
+        lint_cmd="python -c 'import sys; sys.exit(2)'",  # Exit code 2 = crash/fatal
+    )
+    assert result["status"] == "failed"
+    assert "Baseline lint command failed with exit code 2" in result["reason"]
+
+
+def test_run_fix_test_gate_reports_exact_remaining_failures_on_partial_fix(git_repo_with_bug):
+    """N9 verification: partial fix reports remaining failing tests accurately."""
+    import subprocess
+
+    from angrist.cli import _check_test_regression
+
+    # Baseline had two failing tests
+    base = subprocess.CompletedProcess(
+        args=["pytest"],
+        returncode=1,
+        stdout="FAILED tests/t.py::test_a - fail\nFAILED tests/t.py::test_b - fail\n",
+    )
+    # Candidate fixed test_b, but test_a still fails
+    cand = subprocess.CompletedProcess(
+        args=["pytest"],
+        returncode=1,
+        stdout="FAILED tests/t.py::test_a - fail\n",
+    )
+    res = _check_test_regression(base, cand)
+    assert res is not None
+    assert "tests still failing after the patch (1 test(s) failed): tests/t.py::test_a" in res
+    assert "test runner failed" not in res
+
+
+
 
 
