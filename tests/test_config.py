@@ -55,8 +55,9 @@ def test_cli_fix_help_shows_config_options():
     from angrist.cli import app
 
     runner = CliRunner()
-    result = runner.invoke(app, ["--help"])
+    result = runner.invoke(app, ["fix", "--help"])
     assert result.exit_code == 0
+
     assert "--model" in result.stdout
     assert "--api-key" in result.stdout
     assert "--base-url" in result.stdout

@@ -513,5 +513,52 @@ def fix(
         raise typer.Exit(code=1)
 
 
+@app.command()
+
+def benchmark(
+    dataset: str = typer.Option(
+        "benchmarks/swe_bench/manifest.json",
+        help="Path to SWE-bench manifest.json",
+    ),
+    filter: str = typer.Option(
+        None,
+        help="Regex filter pattern for instance_id or repo name",
+    ),
+    output_json: str = typer.Option(
+        "benchmark_results.json",
+        help="Output path for benchmark metrics JSON report",
+    ),
+    model: str = typer.Option(None, help="LLM model name (overrides env and .env)"),
+    api_key: str = typer.Option(None, help="LLM API key (overrides env and .env)"),
+    base_url: str = typer.Option(None, help="LLM API base URL (overrides env and .env)"),
+    max_retries: int = typer.Option(3, help="Max retry attempts per instance"),
+):
+    """Run curated SWE-bench benchmark suite and display Rich evaluation report."""
+    from angrist.benchmark import run_benchmark_suite
+
+    cfg = load_config(model=model, base_url=base_url, api_key=api_key)
+    llm_client = OpenAICompatibleClient(
+        base_url=cfg.base_url,
+        api_key=cfg.api_key,
+        model=cfg.model,
+    )
+
+    console.print("[bold #06b6d4]Starting SWE-bench Evaluation...[/bold #06b6d4]")
+    console.print(f"[dim]Model: {cfg.model} | Endpoint: {cfg.base_url}[/dim]\n")
+
+    summary = run_benchmark_suite(
+        manifest_path=dataset,
+        filter_pattern=filter,
+        llm_client=llm_client,
+        max_retries=max_retries,
+        output_json=output_json,
+        console=console,
+    )
+
+    if summary.failed > 0:
+        raise typer.Exit(code=1)
+
+
 if __name__ == "__main__":
     app()
+

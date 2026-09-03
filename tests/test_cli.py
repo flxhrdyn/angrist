@@ -504,3 +504,17 @@ def test_lint_findings_are_not_swallowed_by_a_warning_prefix():
 
     assert _parse_lint_findings("warning: a.py:1:1: F401 unused") is None
     assert _parse_lint_findings("All checks passed!") == Counter()
+
+
+def test_cli_benchmark_help():
+    from typer.testing import CliRunner
+
+    from angrist.cli import app
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["benchmark", "--help"])
+    assert result.exit_code == 0
+    assert "--dataset" in result.stdout
+    assert "--filter" in result.stdout
+    assert "--output-json" in result.stdout
+
