@@ -19,6 +19,15 @@ class LLMClient(Protocol):
     def complete(self, prompt: str) -> str: ...
 
 
+class LLMError(Exception):
+    """The LLM endpoint could not be reached or returned nothing usable.
+
+    Keeps transport details from escaping as a traceback: a wrong base URL,
+    a rejected key or a down endpoint is the most likely first-run failure,
+    and the caller reports it like any other failed run.
+    """
+
+
 class OpenAICompatibleClient:
     """Talks to any OpenAI-compatible /chat/completions endpoint.
 
@@ -44,16 +53,32 @@ class OpenAICompatibleClient:
         headers = {}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
-        response = self._http.post(
-            f"{self.base_url}/chat/completions",
-            headers=headers,
-            json={
-                "model": self.model,
-                "messages": [{"role": "user", "content": prompt}],
-            },
-        )
-        response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"]
+        url = f"{self.base_url}/chat/completions"
+        try:
+            response = self._http.post(
+                url,
+                headers=headers,
+                json={
+                    "model": self.model,
+                    "messages": [{"role": "user", "content": prompt}],
+                },
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            raise LLMError(
+                f"LLM endpoint {url} returned HTTP {e.response.status_code}: "
+                f"{e.response.text[:500]}"
+            ) from e
+        except httpx.HTTPError as e:
+            raise LLMError(f"Cannot reach LLM endpoint {url}: {e}") from e
+
+        try:
+            return response.json()["choices"][0]["message"]["content"]
+        except (ValueError, KeyError, IndexError, TypeError) as e:
+            raise LLMError(
+                f"LLM endpoint {url} returned an unexpected response shape: "
+                f"{response.text[:500]}"
+            ) from e
 
 
 def build_patch_prompt(

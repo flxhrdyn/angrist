@@ -3,6 +3,7 @@ import httpx
 import pytest
 
 from angrist.patcher import (
+    LLMError,
     OpenAICompatibleClient,
     SanitizationError,
     apply_patch,
@@ -185,3 +186,52 @@ def test_apply_patch_is_idempotent_across_repeated_patches(tmp_path):
         apply_patch(source, "add", "def add(a, b):\n    return a + b\n")
 
     assert source.read_text().count("\n\n\n") == 1
+
+
+def test_complete_wraps_transport_failure_in_llm_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused", request=request)
+
+    client = OpenAICompatibleClient(
+        base_url="http://127.0.0.1:9/v1",
+        api_key="k",
+        model="m",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    with pytest.raises(LLMError) as excinfo:
+        client.complete("fix this")
+
+    assert "http://127.0.0.1:9/v1" in str(excinfo.value)
+
+
+def test_complete_wraps_http_status_error_in_llm_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, json={"error": "invalid api key"})
+
+    client = OpenAICompatibleClient(
+        base_url="https://api.groq.com/openai/v1",
+        api_key="bad",
+        model="m",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    with pytest.raises(LLMError) as excinfo:
+        client.complete("fix this")
+
+    assert "401" in str(excinfo.value)
+
+
+def test_complete_wraps_malformed_response_in_llm_error():
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"unexpected": "shape"})
+
+    client = OpenAICompatibleClient(
+        base_url="https://api.groq.com/openai/v1",
+        api_key="k",
+        model="m",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    with pytest.raises(LLMError):
+        client.complete("fix this")
