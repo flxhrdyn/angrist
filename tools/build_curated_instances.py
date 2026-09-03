@@ -59,7 +59,12 @@ class ASCIIUsernameValidator(RegexValidator):
 '''
     (pkg / "validators.py").write_text(code, encoding="utf-8")
 
-    test_code = '''import pytest
+    test_code = '''import sys
+from pathlib import Path
+import pytest
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from django.contrib.auth.validators import ASCIIUsernameValidator
 
 
@@ -128,6 +133,11 @@ class Config(dict):
     (pkg / "config.py").write_text(code, encoding="utf-8")
 
     test_code = '''import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from flask.config import Config
 
 
@@ -137,6 +147,7 @@ def test_from_file_json(tmp_path):
     c = Config(str(tmp_path))
     assert c.from_file("test.json", load=json.load)
     assert c["KEY"] == "VALUE"
+
 
 
 def test_from_file_binary_mode(tmp_path):
@@ -197,7 +208,12 @@ class EncodingChecker:
 '''
     (pkg / "misc.py").write_text(code, encoding="utf-8")
 
-    test_code = '''from pylint.checkers.misc import EncodingChecker
+    test_code = '''import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from pylint.checkers.misc import EncodingChecker
 
 
 def test_standard_note_tag():
@@ -248,7 +264,12 @@ def import_path(path_str: str, root_str: str = ".") -> types.ModuleType:
 '''
     (pkg / "pathlib.py").write_text(code, encoding="utf-8")
 
-    test_code = '''from _pytest.pathlib import import_path
+    test_code = '''import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from _pytest.pathlib import import_path
 
 
 def test_import_path_remembers_previous_import():
@@ -297,7 +318,12 @@ class DurationField:
 '''
     (pkg / "duration.py").write_text(code, encoding="utf-8")
 
-    test_code = '''from django.db.models.fields.duration import DurationField
+    test_code = '''import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from django.db.models.fields.duration import DurationField
 
 
 def test_duration_format_error_message():
@@ -343,7 +369,12 @@ def inherited_members_option(arg: Any) -> str | set[str]:
     (pkg / "options.py").write_text(code, encoding="utf-8")
 
 
-    test_code = '''from sphinx.ext.autodoc.options import inherited_members_option
+    test_code = '''import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from sphinx.ext.autodoc.options import inherited_members_option
 
 
 def test_inherited_members_default():
@@ -386,7 +417,12 @@ def build_requests_1963():
 '''
     (pkg / "sessions.py").write_text(code, encoding="utf-8")
 
-    test_code = '''from requests.sessions import SessionRedirect
+    test_code = '''import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from requests.sessions import SessionRedirect
 
 
 def test_redirect_303_converts_to_get():
@@ -399,6 +435,10 @@ def test_redirect_307_308_preserves_post():
     assert s.resolve_redirect_method(307, "POST") == "POST"
     assert s.resolve_redirect_method(308, "PUT") == "PUT"
 '''
+    tests_dir = inst_dir / "tests"
+    tests_dir.mkdir(parents=True, exist_ok=True)
+    (tests_dir / "test_sessions.py").write_text(test_code, encoding="utf-8")
+
     tests_dir = inst_dir / "tests"
     tests_dir.mkdir(parents=True, exist_ok=True)
     (tests_dir / "test_sessions.py").write_text(test_code, encoding="utf-8")

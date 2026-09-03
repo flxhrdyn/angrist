@@ -1,4 +1,9 @@
 import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from flask.config import Config
 
 
@@ -8,6 +13,7 @@ def test_from_file_json(tmp_path):
     c = Config(str(tmp_path))
     assert c.from_file("test.json", load=json.load)
     assert c["KEY"] == "VALUE"
+
 
 
 def test_from_file_binary_mode(tmp_path):
