@@ -38,7 +38,7 @@ class OpenAICompatibleClient:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
-        self._http = http_client or httpx.Client()
+        self._http = http_client or httpx.Client(timeout=120.0)
 
     def complete(self, prompt: str) -> str:
         headers = {}

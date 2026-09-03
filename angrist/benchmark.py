@@ -114,6 +114,9 @@ def _worktree_path_for_branch(branch: str, repo_path: str | Path) -> str | None:
     return None
 
 
+from angrist.sandbox import _rmtree_force
+
+
 def _cleanup_sandbox_branch(branch: str, repo_path: str | Path) -> None:
     """Remove the worktree and branch a completed run_fix() left behind."""
     worktree_path = _worktree_path_for_branch(branch, repo_path)
@@ -125,6 +128,8 @@ def _cleanup_sandbox_branch(branch: str, repo_path: str | Path) -> None:
             text=True,
             check=False,
         )
+        if Path(worktree_path).exists():
+            _rmtree_force(worktree_path)
     subprocess.run(
         ["git", "branch", "-D", branch],
         cwd=repo_path,
@@ -145,7 +150,7 @@ def run_benchmark_suite(
 ) -> BenchmarkSummary:
     """Execute curated SWE-bench benchmark instances and collect results."""
     manifest_path = Path(manifest_path)
-    data = json.loads(manifest_path.read_text())
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
     instances = data.get("instances", [])
 
     if filter_pattern:
@@ -178,7 +183,7 @@ def run_benchmark_suite(
 
             file_rel = str(instance_dir / item["file"]).replace("\\", "/")
             instruction_file = instance_dir / item["instruction_file"]
-            instruction = instruction_file.read_text().strip()
+            instruction = instruction_file.read_text(encoding="utf-8").strip()
             raw_test_cmd = item.get("test_cmd", "pytest")
             if raw_test_cmd.startswith("pytest "):
                 test_target = raw_test_cmd[len("pytest ") :].strip()
@@ -283,7 +288,7 @@ def run_benchmark_suite(
             },
             "instances": [asdict(r) for r in summary.instances],
         }
-        out_path.write_text(json.dumps(json_data, indent=2))
+        out_path.write_text(json.dumps(json_data, indent=2), encoding="utf-8")
 
     if console is not None:
         console.print(render_benchmark_table(results))

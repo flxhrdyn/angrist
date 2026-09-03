@@ -22,16 +22,27 @@ def current_branch(repo_path: str | Path = ".") -> str:
     return result.stdout.strip()
 
 
-def _handle_remove_readonly(func, path, exc):
-    """Clear readonly bit on Windows files and retry deletion.
+import sys
 
-    Signature matches Python 3.12+ shutil.rmtree onexc parameter (func, path, exc).
-    """
+
+def _handle_remove_readonly(func, path, exc):
+    """Clear readonly bit on Windows files and retry deletion."""
     try:
         os.chmod(path, stat.S_IWRITE)
         func(path)
     except OSError:
         pass
+
+
+def _rmtree_force(path: Path | str) -> None:
+    """Recursively remove a directory, handling readonly files on Windows across Python 3.11+."""
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, onexc=_handle_remove_readonly)
+    else:
+        shutil.rmtree(
+            path,
+            onerror=lambda func, p, excinfo: _handle_remove_readonly(func, p, excinfo[1]),
+        )
 
 
 class WorktreeSandbox:
@@ -82,12 +93,9 @@ class WorktreeSandbox:
                 capture_output=True,
                 text=True,
             )
-            # N7 FIX: Use onexc without ignore_errors so readonly git files are cleared on Windows
+            # Clear readonly git files on Windows safely across Python versions
             if self.worktree_path.exists():
-                shutil.rmtree(
-                    self.worktree_path,
-                    onexc=_handle_remove_readonly,
-                )
+                _rmtree_force(self.worktree_path)
         if self.branch_name is not None:
             subprocess.run(
                 ["git", "branch", "-D", self.branch_name],

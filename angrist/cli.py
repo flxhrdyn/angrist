@@ -11,6 +11,7 @@ from pathlib import Path
 import typer
 from rich.console import Console
 
+from angrist import __version__
 from angrist.ast_guard import (
     AmbiguousTargetError,
     ASTScopeViolationError,
@@ -34,6 +35,26 @@ app = typer.Typer()
 console = Console()
 
 
+def version_callback(value: bool) -> None:
+    if value:
+        console.print(f"angrist v{__version__}")
+        raise typer.Exit()
+
+
+@app.callback()
+def main(
+    version: bool | None = typer.Option(
+        None,
+        "--version",
+        "-v",
+        help="Show version and exit.",
+        callback=version_callback,
+        is_eager=True,
+    ),
+) -> None:
+    """Angrist: Git-worktree isolated, AST-scope-locked micro-agent."""
+
+
 def _run(cmd: str, cwd: Path | str) -> subprocess.CompletedProcess:
     """Run a configured lint/test command using POSIX shell argument splitting.
 
@@ -55,7 +76,7 @@ def _normalize_lint_cmd(cmd: str) -> str:
     args = shlex.split(cmd, posix=True)
     if (
         args
-        and args[0] == "ruff"
+        and Path(args[0]).stem == "ruff"
         and "check" in args
         and not any(a.startswith("--output-format") for a in args)
     ):
@@ -502,7 +523,7 @@ def fix(
         console.print("[red]Provide --instruction or --instruction-file[/red]")
         raise typer.Exit(code=1)
     if instruction is None:
-        instruction = Path(instruction_file).read_text()
+        instruction = Path(instruction_file).read_text(encoding="utf-8")
 
     cfg = load_config(model=model, base_url=base_url, api_key=api_key)
 

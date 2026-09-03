@@ -262,7 +262,7 @@ def validate_scope(
     original_path: str | Path, candidate_path: str | Path, qualifier: str
 ) -> None:
     validate_scope_source(
-        Path(original_path).read_text(),
-        Path(candidate_path).read_text(),
+        Path(original_path).read_text(encoding="utf-8"),
+        Path(candidate_path).read_text(encoding="utf-8"),
         qualifier,
     )

@@ -521,3 +521,23 @@ def test_cli_benchmark_help():
     assert "--filter" in clean_stdout
     assert "--output-json" in clean_stdout
 
+
+def test_cli_version():
+    from typer.testing import CliRunner
+
+    from angrist import __version__
+    from angrist.cli import app
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["--version"])
+    assert result.exit_code == 0
+    assert f"angrist v{__version__}" in result.stdout
+
+
+def test_package_has_version():
+    import angrist
+
+    assert hasattr(angrist, "__version__")
+    assert angrist.__version__ == "0.1.0"
+
+
