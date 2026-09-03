@@ -23,7 +23,38 @@ RESPONSES = {
         "        self.balance -= amount\n"
         "        return self.balance\n"
     ),
+    "prepare_url": (
+        "    def prepare_url(self, url: str, params: dict | None = None) -> None:\n"
+        "        if not params:\n"
+        "            self.url = url\n"
+        "            return\n"
+        "        scheme, netloc, path, params_part, query, fragment = urlparse(url)\n"
+        "        encoded = urlencode(params)\n"
+        "        new_query = f'{query}&{encoded}' if query else encoded\n"
+        "        self.url = urlunparse((scheme, netloc, path, params_part, new_query, fragment))\n"
+    ),
+    "_do_load": (
+        "    def _do_load(self, data: dict) -> dict:\n"
+        "        result = {}\n"
+        "        for key, expected_type in self.fields.items():\n"
+        "            if key not in data:\n"
+        "                continue\n"
+        "            val = data[key]\n"
+        "            if expected_type is int:\n"
+        "                result[key] = int(val)\n"
+        "            else:\n"
+        "                result[key] = val\n"
+        "        return result\n"
+    ),
+    "add_url_rule": (
+        "    def add_url_rule(self, rule: str, endpoint: str) -> None:\n"
+        "        prefix = self.url_prefix.rstrip('/')\n"
+        "        clean_rule = rule.lstrip('/')\n"
+        "        full_rule = f'{prefix}/{clean_rule}' if prefix else f'/{clean_rule}'\n"
+        "        self.rules.append((full_rule, endpoint))\n"
+    ),
 }
+
 
 
 class MockOpenAIHandler(BaseHTTPRequestHandler):
@@ -44,6 +75,13 @@ class MockOpenAIHandler(BaseHTTPRequestHandler):
             fix_content = RESPONSES["calculate_discount"]
         elif "withdraw" in prompt:
             fix_content = RESPONSES["withdraw"]
+        elif "prepare_url" in prompt:
+            fix_content = RESPONSES["prepare_url"]
+        elif "_do_load" in prompt:
+            fix_content = RESPONSES["_do_load"]
+        elif "add_url_rule" in prompt:
+            fix_content = RESPONSES["add_url_rule"]
+
 
         response_payload = {
             "id": "chatcmpl-mock-angrist",
